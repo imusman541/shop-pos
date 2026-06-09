@@ -1,0 +1,24 @@
+appId: com.yourshop.pos
+productName: Alizeh Foam
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - package.json
+asarUnpack:
+  - "**/node_modules/better-sqlite3/**"
+win:
+  target:
+    - nsis
+mac:
+  target:
+    - dmg
+  category: public.app-category.business
+linux:
+  target:
+    - AppImage
+  category: Office
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
