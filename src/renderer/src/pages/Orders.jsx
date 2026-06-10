@@ -1,13 +1,32 @@
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import Drawer from '../components/Drawer'
 import DateRangePicker from '../components/DateRangePicker'
+import ProductMultiSelect from '../components/ProductMultiSelect'
 import Pagination from '../components/Pagination'
 import { useToast } from '../components/Toast'
 import { money, int, fmtDate, daysAgo } from '../lib/format'
 import { IconPlus, IconExport, IconEdit, IconTrash } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { product_id: '', product_name: '', quantity: 1, price: '', margin: '', status: 'DONE' }
+const EMPTY = { status: 'DONE', items: [] }
+
+function orderQty(items) {
+  return items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
+}
+
+function orderTotal(items) {
+  return items.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0)
+}
+
+function productCountLabel(items) {
+  const n = items.length
+  if (!n) return null
+  return `${n} product${n === 1 ? '' : 's'}`
+}
+
+function lineProfit(item) {
+  return (Number(item.margin) || 0) * (Number(item.quantity) || 0)
+}
 
 export default function Orders() {
   const toast = useToast()
@@ -20,9 +39,11 @@ export default function Orders() {
 
   const [products, setProducts] = useState([])
   const [modalOpen, setModalOpen] = useState(false)
+  const [viewingOrder, setViewingOrder] = useState(null)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
+  const [selected, setSelected] = useState(() => new Set())
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -32,6 +53,7 @@ export default function Orders() {
   }, [filters, page])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setSelected(new Set()) }, [page, filters])
 
   useEffect(() => {
     window.api.listProductsBrief().then(setProducts)
@@ -43,30 +65,88 @@ export default function Orders() {
     updateFilter({ startDate: start, endDate: end })
   }
 
+  const pageIds = data.rows.map((o) => o.id)
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+  const somePageSelected = pageIds.some((id) => selected.has(id))
+
+  const toggleSelect = (id) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAll = () => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allPageSelected) pageIds.forEach((id) => next.delete(id))
+      else pageIds.forEach((id) => next.add(id))
+      return next
+    })
+  }
+
+  const selectedProductIds = useMemo(
+    () => form.items.map((i) => Number(i.product_id)).filter(Boolean),
+    [form.items]
+  )
+
+  const syncProducts = (ids) => {
+    setForm((f) => {
+      const idSet = new Set(ids.map(Number))
+      const kept = f.items.filter((i) => idSet.has(Number(i.product_id)))
+      const keptIds = new Set(kept.map((i) => Number(i.product_id)))
+      const added = ids
+        .filter((id) => !keptIds.has(Number(id)))
+        .map((id) => {
+          const p = products.find((x) => x.id === id)
+          return {
+            product_id: id,
+            product_name: p?.name || '',
+            quantity: 1,
+            price: '',
+            margin: ''
+          }
+        })
+      return { ...f, items: [...kept, ...added] }
+    })
+  }
+
+  const updateLine = (index, patch) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.map((item, i) => (i === index ? { ...item, ...patch } : item))
+    }))
+  }
+
+  const removeLine = (index) => {
+    setForm((f) => ({
+      ...f,
+      items: f.items.filter((_, i) => i !== index)
+    }))
+  }
+
   const openCreate = () => { setEditing(null); setForm(EMPTY); setModalOpen(true) }
+
   const openEdit = (o) => {
     setEditing(o)
     setForm({
-      product_id: o.product_id ?? '', product_name: o.product_name ?? '',
-      quantity: o.quantity, price: o.price, margin: o.margin, status: o.status
+      status: o.status,
+      items: o.items.map((i) => ({
+        product_id: i.product_id,
+        product_name: i.product_name,
+        quantity: i.quantity,
+        price: i.price,
+        margin: i.margin
+      }))
     })
     setModalOpen(true)
   }
 
-  const onPickProduct = (id) => {
-    const p = products.find((x) => String(x.id) === String(id))
-    setForm((f) => ({
-      ...f,
-      product_id: id,
-      product_name: p ? p.name : f.product_name,
-      price: p ? p.net_price : f.price,
-      margin: p ? p.margin : f.margin
-    }))
-  }
-
   const save = async () => {
-    if (!form.product_id && !form.product_name.trim()) {
-      toast('Pick a product or enter a product name'); return
+    if (!form.items.length) {
+      toast('Select at least one product'); return
     }
     setSaving(true)
     try {
@@ -79,16 +159,35 @@ export default function Orders() {
       }
       setModalOpen(false)
       await load()
+    } catch (err) {
+      toast(err.message || 'Could not save order')
     } finally {
       setSaving(false)
     }
   }
 
   const remove = async (o) => {
-    if (!window.confirm(`Delete order #${o.id}? This cannot be undone.`)) return
+    if (!window.confirm(`Delete order #${o.id}? It will be removed from the list.`)) return
     await window.api.deleteOrder(o.id)
     toast('Order deleted')
+    setSelected((prev) => {
+      const next = new Set(prev)
+      next.delete(o.id)
+      return next
+    })
     if (data.rows.length === 1 && page > 1) setPage(page - 1)
+    else load()
+  }
+
+  const bulkRemove = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    const label = ids.length === 1 ? '1 order' : `${ids.length} orders`
+    if (!window.confirm(`Delete ${label}? They will be removed from the list.`)) return
+    const res = await window.api.deleteOrders(ids)
+    toast(`${res.count} order${res.count === 1 ? '' : 's'} deleted`)
+    setSelected(new Set())
+    if (data.rows.length <= ids.length && page > 1) setPage(page - 1)
     else load()
   }
 
@@ -157,16 +256,37 @@ export default function Orders() {
       </div>
 
       <div className="card orders-table-card">
+        {selected.size > 0 && (
+          <div className="bulk-bar">
+            <span>{selected.size} selected</span>
+            <div className="bulk-bar-actions">
+              <button className="btn btn-sm btn-danger" onClick={bulkRemove}>
+                <IconTrash /> Delete selected
+              </button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setSelected(new Set())}>
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
         <div className="table-wrap">
           <table className="orders-table">
             <thead>
               <tr>
+                <th className="check-col">
+                  <input
+                    type="checkbox"
+                    className="row-check"
+                    checked={allPageSelected}
+                    ref={(el) => { if (el) el.indeterminate = somePageSelected && !allPageSelected }}
+                    onChange={toggleSelectAll}
+                    disabled={loading || data.rows.length === 0}
+                    aria-label="Select all on this page"
+                  />
+                </th>
                 <th>Order #</th>
-                <th>Product #</th>
-                <th>Product Name</th>
+                <th>Products</th>
                 <th className="right">Qty</th>
-                <th className="right">Price</th>
-                <th className="right">Margin</th>
                 <th className="right">Total</th>
                 <th>Status</th>
                 <th className="sticky-col sticky-col-date">Date</th>
@@ -175,9 +295,9 @@ export default function Orders() {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={8}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={10}>
+                <tr><td colSpan={8}>
                   <div className="empty-state">
                     <strong>No orders found</strong>
                     Create an order or adjust the filters.
@@ -185,14 +305,32 @@ export default function Orders() {
                 </td></tr>
               ) : (
                 data.rows.map((o) => (
-                  <tr key={o.id}>
+                  <tr key={o.id} className={selected.has(o.id) ? 'row-selected' : ''}>
+                    <td className="check-col">
+                      <input
+                        type="checkbox"
+                        className="row-check"
+                        checked={selected.has(o.id)}
+                        onChange={() => toggleSelect(o.id)}
+                        aria-label={`Select order #${o.id}`}
+                      />
+                    </td>
                     <td><span className="id-pill">#{o.id}</span></td>
-                    <td>{o.product_id ? <span className="id-pill">#{o.product_id}</span> : <span className="muted-dash">—</span>}</td>
-                    <td className="col-name">{o.product_name}</td>
-                    <td className="right num">{int(o.quantity)}</td>
-                    <td className="right num">{money(o.price)}</td>
-                    <td className="right num">{money(o.margin)}</td>
-                    <td className="right num"><strong>{money(o.price * o.quantity)}</strong></td>
+                    <td className="col-products">
+                      {o.items.length === 0 ? (
+                        <span className="muted-dash">—</span>
+                      ) : (
+                        <button
+                          type="button"
+                          className="order-items-link"
+                          onClick={() => setViewingOrder(o)}
+                        >
+                          {productCountLabel(o.items)}
+                        </button>
+                      )}
+                    </td>
+                    <td className="right num">{int(orderQty(o.items))}</td>
+                    <td className="right num"><strong>{money(orderTotal(o.items))}</strong></td>
                     <td><span className={`badge ${o.status === 'DONE' ? 'done' : 'cancelled'}`}>{o.status}</span></td>
                     <td className="col-date sticky-col sticky-col-date">{fmtDate(o.created_at)}</td>
                     <td className="right sticky-col sticky-col-actions">
@@ -211,6 +349,53 @@ export default function Orders() {
       </div>
 
       <Drawer
+        wide
+        open={!!viewingOrder}
+        title={viewingOrder ? `Order #${viewingOrder.id} · Products` : ''}
+        onClose={() => setViewingOrder(null)}
+        footer={
+          <button className="btn" onClick={() => setViewingOrder(null)}>Close</button>
+        }
+      >
+        {viewingOrder && (
+          <div className="order-items-detail">
+            <div className="table-wrap">
+              <table className="order-items-table">
+                <thead>
+                  <tr>
+                    <th>Product</th>
+                    <th className="right">Qty</th>
+                    <th className="right">Price</th>
+                    <th className="right">Profit/Margin</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewingOrder.items.map((item) => (
+                    <tr key={item.id ?? `${item.product_id}-${item.product_name}`}>
+                      <td className="order-item-name">{item.product_name}</td>
+                      <td className="right num">{int(item.quantity)}</td>
+                      <td className="right num">{money(item.price)}</td>
+                      <td className="right num">{money(lineProfit(item))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td><strong>Total</strong></td>
+                    <td className="right num"><strong>{int(orderQty(viewingOrder.items))}</strong></td>
+                    <td className="right num"><strong>{money(orderTotal(viewingOrder.items))}</strong></td>
+                    <td className="right num">
+                      <strong>{money(viewingOrder.items.reduce((s, i) => s + lineProfit(i), 0))}</strong>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      <Drawer
         open={modalOpen}
         title={editing ? `Edit Order · #${editing.id}` : 'Create Order'}
         onClose={() => setModalOpen(false)}
@@ -224,29 +409,65 @@ export default function Orders() {
         }
       >
         <div className="form-stack">
-          <div>
-            <label>Product</label>
-            <select value={form.product_id} onChange={(e) => onPickProduct(e.target.value)}>
-              <option value="">— Select a product —</option>
-              {products.map((p) => (
-                <option key={p.id} value={p.id}>#{p.id} · {p.name}</option>
+          <ProductMultiSelect
+            products={products}
+            value={selectedProductIds}
+            onChange={syncProducts}
+          />
+          <div className="hint">
+            Leave price or margin blank to use the product value. Enter only price or only margin to mix order and product values.
+          </div>
+
+          {form.items.length > 0 && (
+            <div className="order-lines">
+              <div className="order-lines-head">Line items</div>
+              {form.items.map((item, index) => (
+                <div key={`${item.product_id}-${index}`} className="order-line">
+                  <div className="order-line-title">
+                    <span className="id-pill">#{item.product_id}</span>
+                    <span>{item.product_name}</span>
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost order-line-remove"
+                      onClick={() => removeLine(index)}
+                      aria-label="Remove product"
+                    >
+                      <IconTrash />
+                    </button>
+                  </div>
+                  <div className="order-line-fields">
+                    <div>
+                      <label>Qty</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={item.quantity}
+                        onChange={(e) => updateLine(index, { quantity: e.target.value })}
+                      />
+                    </div>
+                    <div>
+                      <label>Price <span className="label-note">(optional)</span></label>
+                      <input
+                        type="number"
+                        value={item.price}
+                        onChange={(e) => updateLine(index, { price: e.target.value })}
+                        placeholder="From product"
+                      />
+                    </div>
+                    <div>
+                      <label>Margin <span className="label-note">(optional)</span></label>
+                      <input
+                        type="number"
+                        value={item.margin}
+                        onChange={(e) => updateLine(index, { margin: e.target.value })}
+                        placeholder="From product"
+                      />
+                    </div>
+                  </div>
+                </div>
               ))}
-            </select>
-            <div className="hint">Picking a product auto-fills its name, price and margin. You can still override them.</div>
-          </div>
-
-          <div>
-            <label>Product name</label>
-            <input value={form.product_name}
-              onChange={(e) => setForm((f) => ({ ...f, product_name: e.target.value }))}
-              placeholder="Product name" />
-          </div>
-
-          <div>
-            <label>Quantity</label>
-            <input type="number" min="1" value={form.quantity}
-              onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} />
-          </div>
+            </div>
+          )}
 
           <div>
             <label>Status</label>
@@ -254,20 +475,6 @@ export default function Orders() {
               <option value="DONE">Done</option>
               <option value="CANCELLED">Cancelled</option>
             </select>
-          </div>
-
-          <div>
-            <label>Price <span className="label-note">(optional)</span></label>
-            <input type="number" value={form.price}
-              onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))}
-              placeholder="From product" />
-          </div>
-
-          <div>
-            <label>Margin / Profit <span className="label-note">(optional)</span></label>
-            <input type="number" value={form.margin}
-              onChange={(e) => setForm((f) => ({ ...f, margin: e.target.value }))}
-              placeholder="From product" />
           </div>
         </div>
       </Drawer>
