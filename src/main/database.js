@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
 import XLSX from 'xlsx'
@@ -16,8 +17,29 @@ function num(v, fallback = 0) {
 
 /* ---------------------------------------------------------------- setup */
 
+function resolveDbPath() {
+  const canonical = path.join(app.getPath('userData'), 'pos.db')
+  const appData = app.getPath('appData')
+  const legacy = [
+    path.join(appData, 'Alizeh Foam', 'pos.db'),
+    path.join(appData, 'shop-pos', 'pos.db'),
+    canonical
+  ].filter((p) => fs.existsSync(p))
+
+  if (!legacy.length) return canonical
+
+  const newest = legacy.reduce((best, p) =>
+    (fs.statSync(p).mtimeMs > fs.statSync(best).mtimeMs ? p : best))
+
+  if (newest !== canonical) {
+    fs.mkdirSync(path.dirname(canonical), { recursive: true })
+    fs.copyFileSync(newest, canonical)
+  }
+  return canonical
+}
+
 function init() {
-  const dbPath = path.join(app.getPath('userData'), 'pos.db')
+  const dbPath = resolveDbPath()
   db = new Database(dbPath)
   db.pragma('journal_mode = DELETE')
 

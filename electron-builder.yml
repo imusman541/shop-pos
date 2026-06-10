@@ -1,8 +1,9 @@
-appId: com.yourshop.pos
+appId: com.alizehfoam.pos
 productName: Alizeh Foam
 directories:
   output: dist
   buildResources: build
+icon: build/icon.png
 files:
   - out/**/*
   - package.json
@@ -12,6 +13,7 @@ win:
   target:
     - nsis
 mac:
+  icon: build/icon.icns
   target:
     - dmg
   category: public.app-category.business

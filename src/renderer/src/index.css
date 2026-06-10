@@ -65,16 +65,12 @@ body {
   gap: 11px;
   padding: 4px 10px 22px;
 }
-.brand .logo {
+.brand-logo {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
-  background: linear-gradient(150deg, var(--amber), #c9742a);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  color: #fff;
-  font-size: 17px;
+  border-radius: 8px;
+  object-fit: contain;
+  flex: none;
 }
 .brand .name {
   font-weight: 700;
@@ -1494,16 +1490,10 @@ tbody tr.row-selected:hover {
   margin-bottom: 22px;
 }
 
-.auth-brand .logo {
+.auth-brand .brand-logo {
   width: 40px;
   height: 40px;
   border-radius: 10px;
-  background: linear-gradient(150deg, var(--amber), #c9742a);
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  color: #fff;
-  font-size: 18px;
 }
 
 .auth-brand .name {

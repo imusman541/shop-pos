@@ -53,7 +53,7 @@ export default function App() {
       <div className="app">
         <aside className="sidebar">
           <div className="brand">
-            <div className="logo">P</div>
+            <img src="./app-icon.png" alt="" className="brand-logo" width="34" height="34" />
             <div>
               <div className="name">Alizeh Foam</div>
               <div className="sub">Point of Sale</div>

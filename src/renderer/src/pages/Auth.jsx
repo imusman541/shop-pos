@@ -7,7 +7,7 @@ export default function Auth({ hasAccount, onAuth }) {
     <div className="auth-screen">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="logo">P</div>
+          <img src="./app-icon.png" alt="" className="brand-logo" width="40" height="40" />
           <div>
             <div className="name">Alizeh Foam</div>
             <div className="sub">Point of Sale</div>

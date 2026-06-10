@@ -1,10 +1,38 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, nativeImage } from 'electron'
+import fs from 'fs'
 import path from 'path'
 import * as db from './database'
 import { registerHandlers } from './handlers'
 import { scheduleBackups, runBackupNow } from './backup'
 
+const APP_NAME = 'Alizeh Foam'
+const USER_DATA_DIR = 'shop-pos'
+
+// Display name for dock / menu; data folder stays fixed so the DB path never moves.
+app.setName(APP_NAME)
+app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR))
+
+function resolveIconPath() {
+  const candidates = [
+    path.join(__dirname, '../../build/icon.png'),
+    path.join(app.getAppPath(), 'build/icon.png')
+  ]
+  return candidates.find((p) => fs.existsSync(p)) || null
+}
+
+function loadAppIcon() {
+  const iconPath = resolveIconPath()
+  if (!iconPath) return null
+  const image = nativeImage.createFromPath(iconPath)
+  if (image.isEmpty()) return null
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(image)
+  }
+  return image
+}
+
 function createWindow() {
+  const icon = loadAppIcon()
   const win = new BrowserWindow({
     width: 1320,
     height: 860,
@@ -12,7 +40,8 @@ function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#0f1720',
-    title: 'Alizeh Foam',
+    title: APP_NAME,
+    icon: icon || undefined,
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
