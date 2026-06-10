@@ -47,8 +47,45 @@ function init() {
 
   migrateOrdersSchema()
   migrateOrderArchive()
+  migrateAppUser()
   seedIfEmpty()
   return dbPath
+}
+
+function migrateAppUser() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_user (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      name          TEXT    NOT NULL,
+      email         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT    NOT NULL,
+      created_at    TEXT    NOT NULL
+    );
+  `)
+}
+
+function hasAppUser() {
+  return !!db.prepare('SELECT 1 FROM app_user WHERE id = 1').get()
+}
+
+function getAppUser() {
+  return db.prepare('SELECT id, name, email, password_hash, created_at FROM app_user WHERE id = 1').get()
+}
+
+function createAppUser({ name, email, passwordHash }) {
+  if (hasAppUser()) throw new Error('Account already created')
+
+  db.prepare(
+    `INSERT INTO app_user (id, name, email, password_hash, created_at)
+     VALUES (1, @name, @email, @password_hash, @created_at)`
+  ).run({
+    name,
+    email,
+    password_hash: passwordHash,
+    created_at: nowISO()
+  })
+
+  return { name, email }
 }
 
 /* ------------------------------------------------------------- products */
@@ -672,6 +709,9 @@ function backupTo(destPath) {
 export {
   init,
   backupTo,
+  hasAppUser,
+  getAppUser,
+  createAppUser,
   getProducts,
   getProductById,
   listProductsBrief,

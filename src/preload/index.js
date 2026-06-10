@@ -3,6 +3,12 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 const api = {
+  // Auth
+  authStatus: () => ipcRenderer.invoke('auth:status'),
+  signUp: (data) => ipcRenderer.invoke('auth:signUp', data),
+  signIn: (data) => ipcRenderer.invoke('auth:signIn', data),
+  signOut: () => ipcRenderer.invoke('auth:signOut'),
+
   // Products
   getProducts: (filters) => ipcRenderer.invoke('products:get', filters),
   getProductById: (id) => ipcRenderer.invoke('products:getById', id),

@@ -1,7 +1,14 @@
 import * as db from './database'
+import * as auth from './auth'
 import { runBackupNow } from './backup'
 
 export function registerHandlers(ipcMain) {
+  // Auth
+  ipcMain.handle('auth:status', () => auth.getAuthStatus())
+  ipcMain.handle('auth:signUp', (_e, data) => auth.signUp(data))
+  ipcMain.handle('auth:signIn', (_e, data) => auth.signIn(data))
+  ipcMain.handle('auth:signOut', () => auth.signOut())
+
   // Products
   ipcMain.handle('products:get', (_e, filters) => db.getProducts(filters))
   ipcMain.handle('products:getById', (_e, id) => db.getProductById(id))
