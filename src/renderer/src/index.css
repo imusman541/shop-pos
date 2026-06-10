@@ -926,7 +926,7 @@ tbody tr.row-selected:hover {
 }
 
 .orders-table {
-  min-width: 1120px;
+  min-width: 900px;
   border-collapse: separate;
   border-spacing: 0;
 }
@@ -936,12 +936,49 @@ tbody tr.row-selected:hover {
   white-space: nowrap;
 }
 
-.orders-table .col-name {
-  min-width: 180px;
-  max-width: 280px;
+.orders-table .col-products {
+  min-width: 100px;
+}
+
+.order-items-link {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--amber);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.order-items-link:hover {
+  color: #c9742a;
+}
+
+.order-items-detail .table-wrap {
+  margin: 0 -4px;
+}
+
+.order-items-table th,
+.order-items-table td {
+  padding: 10px 8px;
+}
+
+.order-items-table .order-item-name {
+  max-width: 220px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.order-items-table tfoot td {
+  border-top: 2px solid var(--line);
+  padding-top: 12px;
+}
+
+.drawer-wide {
+  width: min(620px, calc(100vw - 48px));
 }
 
 .orders-table .col-date {
@@ -986,6 +1023,176 @@ tbody tr.row-selected:hover {
 .label-note {
   color: var(--muted);
   font-weight: 400;
+}
+
+/* ------------------------------------------------------- multi-select */
+
+.multi-select-field {
+  position: relative;
+}
+
+.multi-select-trigger {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  color: var(--text);
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 9px 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.multi-select-trigger .placeholder {
+  color: var(--muted);
+}
+
+.multi-select-trigger:hover,
+.multi-select-trigger.open {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-soft);
+}
+
+.multi-select-trigger:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.multi-select-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), 0 12px 32px rgba(16, 24, 40, 0.12);
+  overflow: hidden;
+}
+
+.multi-select-search {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.multi-select-search:focus {
+  box-shadow: none;
+  border-color: var(--line);
+}
+
+.multi-select-list {
+  max-height: 220px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.form-stack .multi-select-option,
+.multi-select-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text);
+  margin-bottom: 0;
+}
+
+.multi-select-option:hover {
+  background: #f3f5f7;
+}
+
+.multi-select-option .row-check {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.multi-select-option-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.multi-select-empty {
+  padding: 16px 12px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* -------------------------------------------------------- order lines */
+
+.order-lines {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.order-lines-head {
+  padding: 10px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  background: #fbfcfd;
+  border-bottom: 1px solid var(--line);
+}
+
+.order-line {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.order-line:last-child {
+  border-bottom: none;
+}
+
+.order-line-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.order-line-remove {
+  margin-left: auto;
+  color: var(--red);
+}
+
+.order-line-fields {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.order-line-fields label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-soft);
+  margin-bottom: 4px;
+}
+
+.order-line-fields input {
+  width: 100%;
 }
 
 /* --------------------------------------------------------------- drawer */
@@ -1088,7 +1295,7 @@ tbody tr.row-selected:hover {
   margin-bottom: 5px;
 }
 
-.form-stack input,
+.form-stack input:not([type="checkbox"]):not([type="radio"]),
 .form-stack select {
   width: 100%;
 }

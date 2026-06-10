@@ -1,5 +1,6 @@
 import * as db from './database'
 import { runBackupNow } from './backup'
+
 export function registerHandlers(ipcMain) {
   // Products
   ipcMain.handle('products:get', (_e, filters) => db.getProducts(filters))
@@ -17,6 +18,7 @@ export function registerHandlers(ipcMain) {
   ipcMain.handle('orders:create', (_e, data) => db.createOrder(data))
   ipcMain.handle('orders:update', (_e, payload) => db.updateOrder(payload))
   ipcMain.handle('orders:delete', (_e, id) => db.deleteOrder(id))
+  ipcMain.handle('orders:deleteMany', (_e, ids) => db.deleteOrders(ids))
   ipcMain.handle('orders:export', () => db.exportOrders())
   ipcMain.handle('backup:now', () => runBackupNow())
   // Dashboard

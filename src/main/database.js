@@ -45,6 +45,8 @@ function init() {
     );
   `)
 
+  migrateOrdersSchema()
+  migrateOrderArchive()
   seedIfEmpty()
   return dbPath
 }
@@ -146,119 +148,239 @@ function deleteProducts(ids = []) {
 
 /* --------------------------------------------------------------- orders */
 
+function isUnset(v) {
+  return v === '' || v === null || v === undefined
+}
+
+function migrateOrdersSchema() {
+  const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
+  if (!cols.includes('product_id')) {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS order_items (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        order_id      INTEGER NOT NULL,
+        product_id    INTEGER,
+        product_name  TEXT,
+        quantity      INTEGER NOT NULL DEFAULT 1,
+        price         REAL    NOT NULL DEFAULT 0,
+        margin        REAL    NOT NULL DEFAULT 0,
+        FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+      );
+    `)
+    return
+  }
+
+  db.exec(`
+    CREATE TABLE orders_new (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      status      TEXT NOT NULL DEFAULT 'DONE',
+      created_at  TEXT NOT NULL
+    );
+    CREATE TABLE order_items (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id      INTEGER NOT NULL,
+      product_id    INTEGER,
+      product_name  TEXT,
+      quantity      INTEGER NOT NULL DEFAULT 1,
+      price         REAL    NOT NULL DEFAULT 0,
+      margin        REAL    NOT NULL DEFAULT 0,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+  `)
+
+  const legacy = db.prepare('SELECT * FROM orders').all()
+  const insOrder = db.prepare('INSERT INTO orders_new (id, status, created_at) VALUES (?, ?, ?)')
+  const insItem = db.prepare(
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  )
+
+  db.transaction(() => {
+    for (const row of legacy) {
+      insOrder.run(row.id, row.status, row.created_at)
+      insItem.run(row.id, row.product_id, row.product_name, row.quantity, row.price, row.margin)
+    }
+  })()
+
+  db.exec('DROP TABLE orders; ALTER TABLE orders_new RENAME TO orders;')
+}
+
+function migrateOrderArchive() {
+  const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
+  if (!cols.includes('isArchive')) {
+    db.exec('ALTER TABLE orders ADD COLUMN isArchive INTEGER NOT NULL DEFAULT 0')
+  }
+}
+
+function resolveItemPricing(data) {
+  const productId = data.product_id ? num(data.product_id) : null
+  const product = productId ? getProductById(productId) : null
+
+  let price = data.price
+  let margin = data.margin
+  let productName = data.product_name
+
+  if (product) {
+    if (!productName) productName = product.name
+    if (isUnset(price)) price = product.net_price
+    if (isUnset(margin)) margin = product.margin
+  }
+
+  return {
+    product_id: productId,
+    product_name: productName || '',
+    quantity: num(data.quantity, 1),
+    price: num(price),
+    margin: num(margin)
+  }
+}
+
+function mapOrderItem(row) {
+  return {
+    id: row.id,
+    product_id: row.product_id,
+    product_name: row.product_name,
+    quantity: num(row.quantity),
+    price: num(row.price),
+    margin: num(row.margin)
+  }
+}
+
+function attachItems(order) {
+  const items = db
+    .prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id')
+    .all(order.id)
+    .map(mapOrderItem)
+  return { ...order, items }
+}
+
 function getOrderById(id) {
-  return db.prepare('SELECT * FROM orders WHERE id = ?').get(id)
+  const order = db.prepare('SELECT id, status, created_at FROM orders WHERE id = ?').get(id)
+  if (!order) return null
+  return attachItems(order)
+}
+
+function normalizeOrderItems(data) {
+  if (Array.isArray(data.items) && data.items.length) return data.items
+  if (data.product_id || data.product_name) {
+    return [{
+      product_id: data.product_id,
+      product_name: data.product_name,
+      quantity: data.quantity,
+      price: data.price,
+      margin: data.margin
+    }]
+  }
+  return []
 }
 
 function getOrders(filters = {}) {
   const page = Math.max(1, num(filters.page, 1))
   const pageSize = Math.max(1, num(filters.pageSize, 25))
 
-  const where = []
+  const where = ['o.isArchive = 0']
   const params = {}
 
   if (filters.orderId) {
-    where.push('id = @orderId')
+    where.push('o.id = @orderId')
     params.orderId = num(filters.orderId)
   }
   if (filters.productId) {
-    where.push('product_id = @productId')
+    where.push(`EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id AND i.product_id = @productId)`)
     params.productId = num(filters.productId)
   }
   if (filters.productName) {
-    where.push('product_name LIKE @productName')
+    where.push(`EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id AND i.product_name LIKE @productName)`)
     params.productName = `%${filters.productName}%`
   }
   if (filters.status) {
-    where.push('status = @status')
+    where.push('o.status = @status')
     params.status = filters.status
   }
   if (filters.startDate) {
-    where.push('date(created_at) >= date(@startDate)')
+    where.push('date(o.created_at) >= date(@startDate)')
     params.startDate = filters.startDate
   }
   if (filters.endDate) {
-    where.push('date(created_at) <= date(@endDate)')
+    where.push('date(o.created_at) <= date(@endDate)')
     params.endDate = filters.endDate
   }
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM orders ${whereSql}`).get(params).c
-  const rows = db
-    .prepare(`SELECT * FROM orders ${whereSql} ORDER BY id DESC LIMIT @limit OFFSET @offset`)
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM orders o ${whereSql}`).get(params).c
+  const orders = db
+    .prepare(
+      `SELECT o.id, o.status, o.created_at
+       FROM orders o
+       ${whereSql}
+       ORDER BY o.id DESC
+       LIMIT @limit OFFSET @offset`
+    )
     .all({ ...params, limit: pageSize, offset: (page - 1) * pageSize })
 
+  const rows = orders.map(attachItems)
   return { rows, total, page, pageSize }
 }
 
 function createOrder(data) {
-  let price = data.price
-  let margin = data.margin
-  let productName = data.product_name
-  const productId = data.product_id ? num(data.product_id) : null
+  const items = normalizeOrderItems(data)
+  if (!items.length) throw new Error('Order must include at least one product')
 
-  // Auto-fill price / margin / name from the linked product when not provided.
-  if (productId) {
-    const p = getProductById(productId)
-    if (p) {
-      if (price === '' || price === null || price === undefined) price = p.net_price
-      if (margin === '' || margin === null || margin === undefined) margin = p.margin
-      if (!productName) productName = p.name
+  const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
+  const created_at = data.created_at || nowISO()
+
+  const insertOrder = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (?, ?, 0)')
+  const insertItem = db.prepare(
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
+  )
+
+  const orderId = db.transaction(() => {
+    const info = insertOrder.run(status, created_at)
+    const id = info.lastInsertRowid
+    for (const raw of items) {
+      insertItem.run({ order_id: id, ...resolveItemPricing(raw) })
     }
-  }
+    return id
+  })()
 
-  const info = db
-    .prepare(
-      `INSERT INTO orders (product_id, product_name, quantity, price, margin, status, created_at)
-       VALUES (@product_id, @product_name, @quantity, @price, @margin, @status, @created_at)`
-    )
-    .run({
-      product_id: productId,
-      product_name: productName || '',
-      quantity: num(data.quantity, 1),
-      price: num(price),
-      margin: num(margin),
-      status: data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE',
-      created_at: data.created_at || nowISO()
-    })
-  return getOrderById(info.lastInsertRowid)
+  return getOrderById(orderId)
 }
 
 function updateOrder({ id, data }) {
-  let price = data.price
-  let margin = data.margin
-  let productName = data.product_name
-  const productId = data.product_id ? num(data.product_id) : null
+  const items = normalizeOrderItems(data)
+  if (!items.length) throw new Error('Order must include at least one product')
 
-  if (productId) {
-    const p = getProductById(productId)
-    if (p) {
-      if (price === '' || price === null || price === undefined) price = p.net_price
-      if (margin === '' || margin === null || margin === undefined) margin = p.margin
-      if (!productName) productName = p.name
+  const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
+  const insertItem = db.prepare(
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
+  )
+
+  db.transaction(() => {
+    db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
+    db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
+    for (const raw of items) {
+      insertItem.run({ order_id: id, ...resolveItemPricing(raw) })
     }
-  }
+  })()
 
-  db.prepare(
-    `UPDATE orders
-     SET product_id = @product_id, product_name = @product_name, quantity = @quantity,
-         price = @price, margin = @margin, status = @status
-     WHERE id = @id`
-  ).run({
-    id,
-    product_id: productId,
-    product_name: productName || '',
-    quantity: num(data.quantity, 1),
-    price: num(price),
-    margin: num(margin),
-    status: data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
-  })
   return getOrderById(id)
 }
 
 function deleteOrder(id) {
-  db.prepare('DELETE FROM orders WHERE id = ?').run(id)
-  return { ok: true }
+  const result = db.prepare('UPDATE orders SET isArchive = 1 WHERE id = ? AND isArchive = 0').run(id)
+  return { ok: true, count: result.changes }
+}
+
+function deleteOrders(ids = []) {
+  const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
+  if (!list.length) return { ok: true, count: 0 }
+  const placeholders = list.map(() => '?').join(', ')
+  const result = db
+    .prepare(`UPDATE orders SET isArchive = 1 WHERE isArchive = 0 AND id IN (${placeholders})`)
+    .run(...list)
+  return { ok: true, count: result.changes }
 }
 
 /* ------------------------------------------------------------ dashboard */
@@ -307,25 +429,27 @@ function fillSeriesGaps(rows, startDate, endDate) {
 }
 
 function getOrderTotalsForRange(startDate, endDate) {
-  const where = ["status = 'DONE'"]
+  const where = ["o.status = 'DONE'", 'o.isArchive = 0']
   const params = {}
 
   if (startDate) {
-    where.push('date(created_at) >= date(@startDate)')
+    where.push('date(o.created_at) >= date(@startDate)')
     params.startDate = startDate
   }
   if (endDate) {
-    where.push('date(created_at) <= date(@endDate)')
+    where.push('date(o.created_at) <= date(@endDate)')
     params.endDate = endDate
   }
 
   const whereSql = 'WHERE ' + where.join(' AND ')
   const row = db
     .prepare(
-      `SELECT SUM(price * quantity)  AS sales,
-              SUM(margin * quantity) AS profit,
-              SUM(quantity)          AS items
-       FROM orders ${whereSql}`
+      `SELECT SUM(i.price * i.quantity)  AS sales,
+              SUM(i.margin * i.quantity) AS profit,
+              SUM(i.quantity)            AS items
+       FROM orders o
+       JOIN order_items i ON i.order_id = o.id
+       ${whereSql}`
     )
     .get(params)
 
@@ -337,28 +461,30 @@ function getOrderTotalsForRange(startDate, endDate) {
 }
 
 function getDashboard(filters = {}) {
-  const where = ["status = 'DONE'"]
+  const where = ["o.status = 'DONE'", 'o.isArchive = 0']
   const params = {}
 
   if (filters.startDate) {
-    where.push('date(created_at) >= date(@startDate)')
+    where.push('date(o.created_at) >= date(@startDate)')
     params.startDate = filters.startDate
   }
   if (filters.endDate) {
-    where.push('date(created_at) <= date(@endDate)')
+    where.push('date(o.created_at) <= date(@endDate)')
     params.endDate = filters.endDate
   }
 
   const whereSql = 'WHERE ' + where.join(' AND ')
   const series = db
     .prepare(
-      `SELECT date(created_at) AS date,
-              SUM(price * quantity)  AS sales,
-              SUM(margin * quantity) AS profit,
-              SUM(quantity)          AS items
-       FROM orders ${whereSql}
-       GROUP BY date(created_at)
-       ORDER BY date(created_at)`
+      `SELECT date(o.created_at) AS date,
+              SUM(i.price * i.quantity)  AS sales,
+              SUM(i.margin * i.quantity) AS profit,
+              SUM(i.quantity)            AS items
+       FROM orders o
+       JOIN order_items i ON i.order_id = o.id
+       ${whereSql}
+       GROUP BY date(o.created_at)
+       ORDER BY date(o.created_at)`
     )
     .all(params)
     .map((r) => ({
@@ -405,9 +531,12 @@ async function exportProducts() {
 async function exportOrders() {
   const rows = db
     .prepare(
-      `SELECT id AS order_number, product_id, product_name, quantity, price, margin,
-              (price * quantity) AS total, status, created_at
-       FROM orders ORDER BY id`
+      `SELECT o.id AS order_number, i.product_id, i.product_name, i.quantity, i.price, i.margin,
+              (i.price * i.quantity) AS total, o.status, o.created_at
+       FROM orders o
+       JOIN order_items i ON i.order_id = o.id
+       WHERE o.isArchive = 0
+       ORDER BY o.id, i.id`
     )
     .all()
   return writeSheet(rows, 'Orders', 'orders.xlsx')
@@ -501,9 +630,10 @@ function seedIfEmpty() {
     }
   })()
 
-  const insertO = db.prepare(
-    `INSERT INTO orders (product_id, product_name, quantity, price, margin, status, created_at)
-     VALUES (@product_id, @product_name, @quantity, @price, @margin, @status, @created_at)`
+  const insertO = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (@status, @created_at, 0)')
+  const insertI = db.prepare(
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
   )
   db.transaction(() => {
     for (let d = 13; d >= 0; d--) {
@@ -511,17 +641,24 @@ function seedIfEmpty() {
       day.setDate(day.getDate() - d)
       const ordersToday = 1 + Math.floor(Math.random() * 4)
       for (let k = 0; k < ordersToday; k++) {
-        const p = created[Math.floor(Math.random() * created.length)]
-        const qty = 1 + Math.floor(Math.random() * 5)
-        insertO.run({
-          product_id: p.id,
-          product_name: p.name,
-          quantity: qty,
-          price: p.net_price,
-          margin: p.margin,
-          status: Math.random() < 0.1 ? 'CANCELLED' : 'DONE',
-          created_at: day.toISOString()
-        })
+        const status = Math.random() < 0.1 ? 'CANCELLED' : 'DONE'
+        const info = insertO.run({ status, created_at: day.toISOString() })
+        const lineCount = 1 + Math.floor(Math.random() * 2)
+        const picked = new Set()
+        for (let n = 0; n < lineCount; n++) {
+          const p = created[Math.floor(Math.random() * created.length)]
+          if (picked.has(p.id)) continue
+          picked.add(p.id)
+          const qty = 1 + Math.floor(Math.random() * 5)
+          insertI.run({
+            order_id: info.lastInsertRowid,
+            product_id: p.id,
+            product_name: p.name,
+            quantity: qty,
+            price: p.net_price,
+            margin: p.margin
+          })
+        }
       }
     }
   })()
@@ -546,6 +683,7 @@ export {
   createOrder,
   updateOrder,
   deleteOrder,
+  deleteOrders,
   getDashboard,
   exportProducts,
   exportOrders,

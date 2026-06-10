@@ -19,6 +19,7 @@ const api = {
   createOrder: (data) => ipcRenderer.invoke('orders:create', data),
   updateOrder: (id, data) => ipcRenderer.invoke('orders:update', { id, data }),
   deleteOrder: (id) => ipcRenderer.invoke('orders:delete', id),
+  deleteOrders: (ids) => ipcRenderer.invoke('orders:deleteMany', ids),
   exportOrders: () => ipcRenderer.invoke('orders:export'),
 
   // Dashboard
