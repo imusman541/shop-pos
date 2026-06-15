@@ -5,7 +5,7 @@ import ProductMultiSelect from '../components/ProductMultiSelect'
 import Pagination from '../components/Pagination'
 import { useToast } from '../components/Toast'
 import { money, int, fmtDate, daysAgo } from '../lib/format'
-import { IconPlus, IconExport, IconEdit, IconTrash } from '../components/icons'
+import { IconPlus, IconExport, IconEdit, IconTrash, IconInfo } from '../components/icons'
 
 const PAGE_SIZE = 25
 const EMPTY = { status: 'DONE', items: [] }
@@ -15,7 +15,19 @@ function orderQty(items) {
 }
 
 function orderTotal(items) {
-  return items.reduce((s, i) => s + (Number(i.price) || 0) * (Number(i.quantity) || 0), 0)
+  return items.reduce((s, i) => s + (Number(i.total_price) || 0), 0)
+}
+
+function orderProfit(items) {
+  return items.reduce((s, i) => s + (Number(i.profit) || 0), 0)
+}
+
+function lineCost(item) {
+  return (Number(item.unit_cost) || 0) * (Number(item.quantity) || 0)
+}
+
+function orderCost(items) {
+  return items.reduce((s, i) => s + lineCost(i), 0)
 }
 
 function productCountLabel(items) {
@@ -24,8 +36,22 @@ function productCountLabel(items) {
   return `${n} product${n === 1 ? '' : 's'}`
 }
 
-function lineProfit(item) {
-  return (Number(item.margin) || 0) * (Number(item.quantity) || 0)
+function isValidTotalPrice(v) {
+  if (v === '' || v === null || v === undefined) return false
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0
+}
+
+function TotalPriceLabel() {
+  return (
+    <span className="label-with-info">
+      Total Price
+      <span className="info-tip" tabIndex={0} aria-label="This price includes the profit as well.">
+        <IconInfo />
+        <span className="info-tip-text">This price includes the profit as well.</span>
+      </span>
+    </span>
+  )
 }
 
 export default function Orders() {
@@ -105,8 +131,7 @@ export default function Orders() {
             product_id: id,
             product_name: p?.name || '',
             quantity: 1,
-            price: '',
-            margin: ''
+            total_price: ''
           }
         })
       return { ...f, items: [...kept, ...added] }
@@ -137,8 +162,8 @@ export default function Orders() {
         product_id: i.product_id,
         product_name: i.product_name,
         quantity: i.quantity,
-        price: i.price,
-        margin: i.margin
+        total_price: i.total_price,
+        unit_cost: i.unit_cost
       }))
     })
     setModalOpen(true)
@@ -147,6 +172,11 @@ export default function Orders() {
   const save = async () => {
     if (!form.items.length) {
       toast('Select at least one product'); return
+    }
+    const invalid = form.items.find((i) => !isValidTotalPrice(i.total_price))
+    if (invalid) {
+      toast(`Enter a total price for ${invalid.product_name || 'each product'}`)
+      return
     }
     setSaving(true)
     try {
@@ -286,18 +316,19 @@ export default function Orders() {
                 </th>
                 <th>Order #</th>
                 <th>Products</th>
-                <th className="right">Qty</th>
-                <th className="right">Total</th>
+                <th>Qty</th>
                 <th>Status</th>
+                <th className="sticky-col sticky-col-total">Total</th>
+                <th className="sticky-col sticky-col-profit">Profit</th>
                 <th className="sticky-col sticky-col-date">Date</th>
-                <th className="right sticky-col sticky-col-actions">Actions</th>
+                <th className="sticky-col sticky-col-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={8}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={9}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={8}>
+                <tr><td colSpan={9}>
                   <div className="empty-state">
                     <strong>No orders found</strong>
                     Create an order or adjust the filters.
@@ -329,11 +360,12 @@ export default function Orders() {
                         </button>
                       )}
                     </td>
-                    <td className="right num">{int(orderQty(o.items))}</td>
-                    <td className="right num"><strong>{money(orderTotal(o.items))}</strong></td>
+                    <td className="num">{int(orderQty(o.items))}</td>
                     <td><span className={`badge ${o.status === 'DONE' ? 'done' : 'cancelled'}`}>{o.status}</span></td>
+                    <td className="num sticky-col sticky-col-total"><strong>{money(orderTotal(o.items))}</strong></td>
+                    <td className="num sticky-col sticky-col-profit"><strong>{money(orderProfit(o.items))}</strong></td>
                     <td className="col-date sticky-col sticky-col-date">{fmtDate(o.created_at)}</td>
-                    <td className="right sticky-col sticky-col-actions">
+                    <td className="sticky-col sticky-col-actions">
                       <div className="row-actions">
                         <button className="btn btn-sm" onClick={() => openEdit(o)}><IconEdit /></button>
                         <button className="btn btn-sm btn-danger" onClick={() => remove(o)}><IconTrash /></button>
@@ -364,28 +396,31 @@ export default function Orders() {
                 <thead>
                   <tr>
                     <th>Product</th>
-                    <th className="right">Qty</th>
-                    <th className="right">Price</th>
-                    <th className="right">Profit/Margin</th>
+                    <th>Qty</th>
+                    <th>Cost</th>
+                    <th>Total Price</th>
+                    <th>Profit</th>
                   </tr>
                 </thead>
                 <tbody>
                   {viewingOrder.items.map((item) => (
                     <tr key={item.id ?? `${item.product_id}-${item.product_name}`}>
                       <td className="order-item-name">{item.product_name}</td>
-                      <td className="right num">{int(item.quantity)}</td>
-                      <td className="right num">{money(item.price)}</td>
-                      <td className="right num">{money(lineProfit(item))}</td>
+                      <td className="num">{int(item.quantity)}</td>
+                      <td className="num">{money(lineCost(item))}</td>
+                      <td className="num">{money(item.total_price)}</td>
+                      <td className="num">{money(item.profit)}</td>
                     </tr>
                   ))}
                 </tbody>
                 <tfoot>
                   <tr>
                     <td><strong>Total</strong></td>
-                    <td className="right num"><strong>{int(orderQty(viewingOrder.items))}</strong></td>
-                    <td className="right num"><strong>{money(orderTotal(viewingOrder.items))}</strong></td>
-                    <td className="right num">
-                      <strong>{money(viewingOrder.items.reduce((s, i) => s + lineProfit(i), 0))}</strong>
+                    <td className="num"><strong>{int(orderQty(viewingOrder.items))}</strong></td>
+                    <td className="num"><strong>{money(orderCost(viewingOrder.items))}</strong></td>
+                    <td className="num"><strong>{money(orderTotal(viewingOrder.items))}</strong></td>
+                    <td className="num">
+                      <strong>{money(orderProfit(viewingOrder.items))}</strong>
                     </td>
                   </tr>
                 </tfoot>
@@ -414,9 +449,6 @@ export default function Orders() {
             value={selectedProductIds}
             onChange={syncProducts}
           />
-          <div className="hint">
-            Leave price or margin blank to use the product value. Enter only price or only margin to mix order and product values.
-          </div>
 
           {form.items.length > 0 && (
             <div className="order-lines">
@@ -446,21 +478,15 @@ export default function Orders() {
                       />
                     </div>
                     <div>
-                      <label>Price <span className="label-note">(optional)</span></label>
+                      <label><TotalPriceLabel /></label>
                       <input
                         type="number"
-                        value={item.price}
-                        onChange={(e) => updateLine(index, { price: e.target.value })}
-                        placeholder="From product"
-                      />
-                    </div>
-                    <div>
-                      <label>Margin <span className="label-note">(optional)</span></label>
-                      <input
-                        type="number"
-                        value={item.margin}
-                        onChange={(e) => updateLine(index, { margin: e.target.value })}
-                        placeholder="From product"
+                        min="0.01"
+                        step="any"
+                        required
+                        value={item.total_price}
+                        onChange={(e) => updateLine(index, { total_price: e.target.value })}
+                        placeholder="Line total"
                       />
                     </div>
                   </div>
