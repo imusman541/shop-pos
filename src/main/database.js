@@ -49,8 +49,7 @@ function init() {
       name        TEXT    NOT NULL,
       image       TEXT,
       quantity    INTEGER NOT NULL DEFAULT 0,
-      net_price   REAL    NOT NULL DEFAULT 0,
-      margin      REAL    NOT NULL DEFAULT 0,
+      cost        REAL    NOT NULL DEFAULT 0,
       status      TEXT    NOT NULL DEFAULT 'in_stock',
       created_at  TEXT    NOT NULL
     );
@@ -69,6 +68,8 @@ function init() {
 
   migrateOrdersSchema()
   migrateOrderArchive()
+  migrateOrderItemsSchema()
+  migrateProductsSchema()
   migrateAppUser()
   seedIfEmpty()
   return dbPath
@@ -118,15 +119,15 @@ function getProductById(id) {
 
 function listProductsBrief() {
   return db
-    .prepare('SELECT id, name, net_price, margin FROM products ORDER BY name')
+    .prepare('SELECT id, name, cost, quantity, status FROM products ORDER BY name')
     .all()
 }
 
 function getProducts(filters = {}) {
   const search = filters.search || ''
   const status = filters.status || ''
-  const priceOp = filters.priceOp || ''
-  const priceValue = filters.priceValue
+  const costOp = filters.costOp || ''
+  const costValue = filters.costValue
   const page = Math.max(1, num(filters.page, 1))
   const pageSize = Math.max(1, num(filters.pageSize, 25))
 
@@ -141,10 +142,10 @@ function getProducts(filters = {}) {
     where.push('status = @status')
     params.status = status
   }
-  if (priceOp && priceValue !== '' && priceValue !== null && priceValue !== undefined && Number.isFinite(Number(priceValue))) {
-    const op = priceOp === 'gt' ? '>' : priceOp === 'lt' ? '<' : '='
-    where.push(`net_price ${op} @priceValue`)
-    params.priceValue = Number(priceValue)
+  if (costOp && costValue !== '' && costValue !== null && costValue !== undefined && Number.isFinite(Number(costValue))) {
+    const op = costOp === 'gt' ? '>' : costOp === 'lt' ? '<' : '='
+    where.push(`cost ${op} @costValue`)
+    params.costValue = Number(costValue)
   }
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
@@ -159,15 +160,14 @@ function getProducts(filters = {}) {
 function createProduct(data) {
   const info = db
     .prepare(
-      `INSERT INTO products (name, image, quantity, net_price, margin, status, created_at)
-       VALUES (@name, @image, @quantity, @net_price, @margin, @status, @created_at)`
+      `INSERT INTO products (name, image, quantity, cost, status, created_at)
+       VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
     )
     .run({
       name: data.name || 'Unnamed product',
       image: data.image || null,
       quantity: num(data.quantity),
-      net_price: num(data.net_price),
-      margin: num(data.margin),
+      cost: num(data.cost),
       status: data.status === 'out_of_stock' ? 'out_of_stock' : 'in_stock',
       created_at: nowISO()
     })
@@ -178,15 +178,14 @@ function updateProduct({ id, data }) {
   db.prepare(
     `UPDATE products
      SET name = @name, image = @image, quantity = @quantity,
-         net_price = @net_price, margin = @margin, status = @status
+         cost = @cost, status = @status
      WHERE id = @id`
   ).run({
     id,
     name: data.name || 'Unnamed product',
     image: data.image || null,
     quantity: num(data.quantity),
-    net_price: num(data.net_price),
-    margin: num(data.margin),
+    cost: num(data.cost),
     status: data.status === 'out_of_stock' ? 'out_of_stock' : 'in_stock'
   })
   return getProductById(id)
@@ -221,8 +220,9 @@ function migrateOrdersSchema() {
         product_id    INTEGER,
         product_name  TEXT,
         quantity      INTEGER NOT NULL DEFAULT 1,
-        price         REAL    NOT NULL DEFAULT 0,
-        margin        REAL    NOT NULL DEFAULT 0,
+        total_price   REAL    NOT NULL DEFAULT 0,
+        unit_cost     REAL    NOT NULL DEFAULT 0,
+        profit        REAL    NOT NULL DEFAULT 0,
         FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
       );
     `)
@@ -241,8 +241,9 @@ function migrateOrdersSchema() {
       product_id    INTEGER,
       product_name  TEXT,
       quantity      INTEGER NOT NULL DEFAULT 1,
-      price         REAL    NOT NULL DEFAULT 0,
-      margin        REAL    NOT NULL DEFAULT 0,
+      total_price   REAL    NOT NULL DEFAULT 0,
+      unit_cost     REAL    NOT NULL DEFAULT 0,
+      profit        REAL    NOT NULL DEFAULT 0,
       FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
     );
   `)
@@ -250,14 +251,22 @@ function migrateOrdersSchema() {
   const legacy = db.prepare('SELECT * FROM orders').all()
   const insOrder = db.prepare('INSERT INTO orders_new (id, status, created_at) VALUES (?, ?, ?)')
   const insItem = db.prepare(
-    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
 
   db.transaction(() => {
     for (const row of legacy) {
+      const qty = num(row.quantity, 1)
+      const unitPrice = num(row.price)
+      const unitMargin = num(row.margin)
       insOrder.run(row.id, row.status, row.created_at)
-      insItem.run(row.id, row.product_id, row.product_name, row.quantity, row.price, row.margin)
+      insItem.run(
+        row.id, row.product_id, row.product_name, qty,
+        unitPrice * qty,
+        unitPrice - unitMargin,
+        unitMargin * qty
+      )
     }
   })()
 
@@ -271,26 +280,141 @@ function migrateOrderArchive() {
   }
 }
 
-function resolveItemPricing(data) {
+function migrateOrderItemsSchema() {
+  const cols = db.prepare('PRAGMA table_info(order_items)').all().map((c) => c.name)
+  if (!cols.length) return
+
+  if (cols.includes('total_price') && cols.includes('unit_cost') && cols.includes('profit') && !cols.includes('margin')) {
+    return
+  }
+
+  if (!cols.includes('price')) return
+
+  db.exec(`
+    CREATE TABLE order_items_new (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id      INTEGER NOT NULL,
+      product_id    INTEGER,
+      product_name  TEXT,
+      quantity      INTEGER NOT NULL DEFAULT 1,
+      total_price   REAL    NOT NULL DEFAULT 0,
+      unit_cost     REAL    NOT NULL DEFAULT 0,
+      profit        REAL    NOT NULL DEFAULT 0,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+    INSERT INTO order_items_new (id, order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
+    SELECT id, order_id, product_id, product_name, quantity,
+           price * quantity,
+           price - margin,
+           margin * quantity
+    FROM order_items;
+    DROP TABLE order_items;
+    ALTER TABLE order_items_new RENAME TO order_items;
+  `)
+}
+
+function migrateProductsSchema() {
+  const cols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name)
+  if (!cols.length) return
+
+  const hasNetPrice = cols.includes('net_price')
+  const hasCost = cols.includes('cost')
+  const hasMargin = cols.includes('margin')
+
+  if (hasCost && !hasNetPrice && !hasMargin) return
+
+  const costSource = hasCost ? 'cost' : 'net_price'
+  db.exec(`
+    CREATE TABLE products_new (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      image       TEXT,
+      quantity    INTEGER NOT NULL DEFAULT 0,
+      cost        REAL    NOT NULL DEFAULT 0,
+      status      TEXT    NOT NULL DEFAULT 'in_stock',
+      created_at  TEXT    NOT NULL
+    );
+    INSERT INTO products_new (id, name, image, quantity, cost, status, created_at)
+    SELECT id, name, image, quantity, ${costSource}, status, created_at FROM products;
+    DROP TABLE products;
+    ALTER TABLE products_new RENAME TO products;
+  `)
+}
+
+function inventoryTotals(items) {
+  const totals = new Map()
+  for (const item of items) {
+    const productId = item.product_id ? num(item.product_id) : null
+    if (!productId) continue
+    totals.set(productId, (totals.get(productId) || 0) + num(item.quantity, 1))
+  }
+  return totals
+}
+
+function adjustInventory(items, sign) {
+  const totals = inventoryTotals(items)
+  const getProduct = db.prepare('SELECT id, name, quantity, status FROM products WHERE id = ?')
+  const update = db.prepare('UPDATE products SET quantity = @quantity, status = @status WHERE id = @id')
+
+  for (const [productId, qty] of totals) {
+    const product = getProduct.get(productId)
+    if (!product) continue
+
+    if (sign < 0 && qty > num(product.quantity)) {
+      throw new Error(`Not enough stock for ${product.name}. Available: ${num(product.quantity)}`)
+    }
+  }
+
+  for (const [productId, qty] of totals) {
+    const product = getProduct.get(productId)
+    if (!product) continue
+    const newQty = Math.max(0, num(product.quantity) + sign * qty)
+    const newStatus = newQty <= 0 ? 'out_of_stock' : 'in_stock'
+    update.run({ id: productId, quantity: newQty, status: newStatus })
+  }
+}
+
+function restoreInventory(items) {
+  adjustInventory(items, 1)
+}
+
+function deductInventory(items) {
+  adjustInventory(items, -1)
+}
+
+function resolveItemPricing(data, existingItem = null) {
   const productId = data.product_id ? num(data.product_id) : null
   const product = productId ? getProductById(productId) : null
 
-  let price = data.price
-  let margin = data.margin
   let productName = data.product_name
+  const quantity = num(data.quantity, 1)
+  let totalPrice = data.total_price
+  let unitCost = data.unit_cost
 
-  if (product) {
-    if (!productName) productName = product.name
-    if (isUnset(price)) price = product.net_price
-    if (isUnset(margin)) margin = product.margin
+  if (product && !productName) productName = product.name
+
+  if (isUnset(unitCost) && existingItem) {
+    unitCost = existingItem.unit_cost
+  } else if (isUnset(unitCost) && product) {
+    unitCost = product.cost
+  } else {
+    unitCost = num(unitCost)
   }
+
+  if (isUnset(totalPrice) || num(totalPrice) <= 0) {
+    throw new Error(`Total price is required for ${productName || 'each product'}`)
+  }
+  totalPrice = num(totalPrice)
+
+  const profit = totalPrice - quantity * unitCost
 
   return {
     product_id: productId,
     product_name: productName || '',
-    quantity: num(data.quantity, 1),
-    price: num(price),
-    margin: num(margin)
+    quantity,
+    total_price: totalPrice,
+    unit_cost: unitCost,
+    profit
   }
 }
 
@@ -300,8 +424,9 @@ function mapOrderItem(row) {
     product_id: row.product_id,
     product_name: row.product_name,
     quantity: num(row.quantity),
-    price: num(row.price),
-    margin: num(row.margin)
+    total_price: num(row.total_price),
+    unit_cost: num(row.unit_cost),
+    profit: num(row.profit)
   }
 }
 
@@ -326,8 +451,8 @@ function normalizeOrderItems(data) {
       product_id: data.product_id,
       product_name: data.product_name,
       quantity: data.quantity,
-      price: data.price,
-      margin: data.margin
+      total_price: data.total_price,
+      unit_cost: data.unit_cost
     }]
   }
   return []
@@ -390,16 +515,18 @@ function createOrder(data) {
 
   const insertOrder = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (?, ?, 0)')
   const insertItem = db.prepare(
-    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
-     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
   )
 
   const orderId = db.transaction(() => {
     const info = insertOrder.run(status, created_at)
     const id = info.lastInsertRowid
-    for (const raw of items) {
-      insertItem.run({ order_id: id, ...resolveItemPricing(raw) })
+    const resolved = items.map((raw) => resolveItemPricing(raw))
+    for (const item of resolved) {
+      insertItem.run({ order_id: id, ...item })
     }
+    if (status === 'DONE') deductInventory(resolved)
     return id
   })()
 
@@ -412,34 +539,63 @@ function updateOrder({ id, data }) {
 
   const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
   const insertItem = db.prepare(
-    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
-     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
   )
+  const existingOrder = db.prepare('SELECT status FROM orders WHERE id = ?').get(id)
+  const existingItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
+  const existingByProduct = new Map(existingItems.map((i) => [i.product_id, i]))
 
   db.transaction(() => {
+    if (existingOrder?.status === 'DONE') restoreInventory(existingItems)
+
     db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
     db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
-    for (const raw of items) {
-      insertItem.run({ order_id: id, ...resolveItemPricing(raw) })
+
+    const resolved = items.map((raw) => {
+      const productId = raw.product_id ? num(raw.product_id) : null
+      const existing = productId ? existingByProduct.get(productId) : null
+      return resolveItemPricing(raw, existing)
+    })
+    for (const item of resolved) {
+      insertItem.run({ order_id: id, ...item })
     }
+    if (status === 'DONE') deductInventory(resolved)
   })()
 
   return getOrderById(id)
 }
 
 function deleteOrder(id) {
-  const result = db.prepare('UPDATE orders SET isArchive = 1 WHERE id = ? AND isArchive = 0').run(id)
-  return { ok: true, count: result.changes }
+  const order = db.prepare('SELECT status FROM orders WHERE id = ? AND isArchive = 0').get(id)
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
+
+  db.transaction(() => {
+    if (order?.status === 'DONE') restoreInventory(items)
+    db.prepare('UPDATE orders SET isArchive = 1 WHERE id = ? AND isArchive = 0').run(id)
+  })()
+
+  return { ok: true, count: order ? 1 : 0 }
 }
 
 function deleteOrders(ids = []) {
   const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
   if (!list.length) return { ok: true, count: 0 }
   const placeholders = list.map(() => '?').join(', ')
-  const result = db
-    .prepare(`UPDATE orders SET isArchive = 1 WHERE isArchive = 0 AND id IN (${placeholders})`)
-    .run(...list)
-  return { ok: true, count: result.changes }
+
+  let count = 0
+  db.transaction(() => {
+    for (const id of list) {
+      const order = db.prepare('SELECT status FROM orders WHERE id = ? AND isArchive = 0').get(id)
+      if (!order) continue
+      const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
+      if (order.status === 'DONE') restoreInventory(items)
+      const result = db.prepare('UPDATE orders SET isArchive = 1 WHERE isArchive = 0 AND id = ?').run(id)
+      count += result.changes
+    }
+  })()
+
+  return { ok: true, count }
 }
 
 /* ------------------------------------------------------------ dashboard */
@@ -487,27 +643,49 @@ function fillSeriesGaps(rows, startDate, endDate) {
   return result
 }
 
-function getOrderTotalsForRange(startDate, endDate) {
+function normalizeProductIds(filters = {}) {
+  const raw = filters.productIds
+  if (raw == null || raw === '') return []
+  const list = Array.isArray(raw) ? raw : [raw]
+  return [...new Set(list.map((id) => Number(id)).filter((id) => id > 0))]
+}
+
+function productIdsFilter(filters, params, alias = 'i') {
+  const ids = normalizeProductIds(filters)
+  if (!ids.length) return ''
+  const placeholders = ids.map((_, idx) => `@pid${idx}`).join(', ')
+  ids.forEach((id, idx) => { params[`pid${idx}`] = id })
+  return ` AND ${alias}.product_id IN (${placeholders})`
+}
+
+function dashboardBaseWhere(filters, params) {
   const where = ["o.status = 'DONE'", 'o.isArchive = 0']
-  const params = {}
 
-  if (startDate) {
+  if (filters.startDate) {
     where.push('date(o.created_at) >= date(@startDate)')
-    params.startDate = startDate
+    params.startDate = filters.startDate
   }
-  if (endDate) {
+  if (filters.endDate) {
     where.push('date(o.created_at) <= date(@endDate)')
-    params.endDate = endDate
+    params.endDate = filters.endDate
   }
 
-  const whereSql = 'WHERE ' + where.join(' AND ')
+  return where
+}
+
+function getOrderTotalsForRange(startDate, endDate, filters = {}) {
+  const params = { startDate, endDate }
+  const where = dashboardBaseWhere({ ...filters, startDate, endDate }, params)
+  const productFilter = productIdsFilter(filters, params)
+
+  const whereSql = 'WHERE ' + where.join(' AND ') + productFilter
   const row = db
     .prepare(
-      `SELECT SUM(i.price * i.quantity)  AS sales,
-              SUM(i.margin * i.quantity) AS profit,
-              SUM(i.quantity)            AS items
-       FROM orders o
-       JOIN order_items i ON i.order_id = o.id
+      `SELECT SUM(i.total_price) AS sales,
+              SUM(i.profit)      AS profit,
+              SUM(i.quantity)    AS items
+       FROM order_items i
+       JOIN orders o ON o.id = i.order_id
        ${whereSql}`
     )
     .get(params)
@@ -520,27 +698,18 @@ function getOrderTotalsForRange(startDate, endDate) {
 }
 
 function getDashboard(filters = {}) {
-  const where = ["o.status = 'DONE'", 'o.isArchive = 0']
   const params = {}
-
-  if (filters.startDate) {
-    where.push('date(o.created_at) >= date(@startDate)')
-    params.startDate = filters.startDate
-  }
-  if (filters.endDate) {
-    where.push('date(o.created_at) <= date(@endDate)')
-    params.endDate = filters.endDate
-  }
-
-  const whereSql = 'WHERE ' + where.join(' AND ')
+  const where = dashboardBaseWhere(filters, params)
+  const productFilter = productIdsFilter(filters, params)
+  const whereSql = 'WHERE ' + where.join(' AND ') + productFilter
   const series = db
     .prepare(
       `SELECT date(o.created_at) AS date,
-              SUM(i.price * i.quantity)  AS sales,
-              SUM(i.margin * i.quantity) AS profit,
-              SUM(i.quantity)            AS items
-       FROM orders o
-       JOIN order_items i ON i.order_id = o.id
+              SUM(i.total_price) AS sales,
+              SUM(i.profit)      AS profit,
+              SUM(i.quantity)    AS items
+       FROM order_items i
+       JOIN orders o ON o.id = i.order_id
        ${whereSql}
        GROUP BY date(o.created_at)
        ORDER BY date(o.created_at)`
@@ -569,7 +738,7 @@ function getDashboard(filters = {}) {
 
   if (filters.startDate && filters.endDate) {
     previousPeriod = previousPeriodDates(filters.startDate, filters.endDate)
-    previousTotals = getOrderTotalsForRange(previousPeriod.startDate, previousPeriod.endDate)
+    previousTotals = getOrderTotalsForRange(previousPeriod.startDate, previousPeriod.endDate, filters)
   }
 
   return { series: filledSeries, totals, previousTotals, previousPeriod }
@@ -580,7 +749,7 @@ function getDashboard(filters = {}) {
 async function exportProducts() {
   const rows = db
     .prepare(
-      `SELECT id AS product_number, name, quantity, net_price, margin, status, created_at
+      `SELECT id AS product_number, name, quantity, cost, status, created_at
        FROM products ORDER BY id`
     )
     .all()
@@ -590,8 +759,8 @@ async function exportProducts() {
 async function exportOrders() {
   const rows = db
     .prepare(
-      `SELECT o.id AS order_number, i.product_id, i.product_name, i.quantity, i.price, i.margin,
-              (i.price * i.quantity) AS total, o.status, o.created_at
+      `SELECT o.id AS order_number, i.product_id, i.product_name, i.quantity,
+              i.total_price, i.unit_cost, i.profit, o.status, o.created_at
        FROM orders o
        JOIN order_items i ON i.order_id = o.id
        WHERE o.isArchive = 0
@@ -634,8 +803,8 @@ async function importProducts() {
   }
 
   const insert = db.prepare(
-    `INSERT INTO products (name, image, quantity, net_price, margin, status, created_at)
-     VALUES (@name, @image, @quantity, @net_price, @margin, @status, @created_at)`
+    `INSERT INTO products (name, image, quantity, cost, status, created_at)
+     VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
   )
 
   const tx = db.transaction((items) => {
@@ -648,8 +817,7 @@ async function importProducts() {
         name: String(name),
         image: null,
         quantity: num(pick(r, ['quantity', 'Quantity', 'qty', 'Qty'])),
-        net_price: num(pick(r, ['net_price', 'net price', 'Net Price', 'price', 'Price'])),
-        margin: num(pick(r, ['margin', 'Margin', 'profit', 'Profit'])),
+        cost: num(pick(r, ['cost', 'Cost', 'net_price', 'net price', 'Net Price', 'price', 'Price'])),
         status: rawStatus.includes('out') ? 'out_of_stock' : 'in_stock',
         created_at: nowISO()
       })
@@ -669,17 +837,17 @@ function seedIfEmpty() {
   if (existing > 0) return
 
   const sampleProducts = [
-    { name: 'Coca Cola 500ml', quantity: 120, net_price: 80, margin: 20, status: 'in_stock' },
-    { name: 'Lay\'s Chips Salted', quantity: 60, net_price: 50, margin: 15, status: 'in_stock' },
-    { name: 'Nestle Water 1.5L', quantity: 0, net_price: 70, margin: 18, status: 'out_of_stock' },
-    { name: 'Dairy Milk Chocolate', quantity: 40, net_price: 150, margin: 40, status: 'in_stock' },
-    { name: 'Sunsilk Shampoo 200ml', quantity: 25, net_price: 320, margin: 70, status: 'in_stock' },
-    { name: 'Surf Excel 1kg', quantity: 18, net_price: 540, margin: 110, status: 'in_stock' }
+    { name: 'Coca Cola 500ml', quantity: 120, cost: 80, status: 'in_stock' },
+    { name: 'Lay\'s Chips Salted', quantity: 60, cost: 50, status: 'in_stock' },
+    { name: 'Nestle Water 1.5L', quantity: 0, cost: 70, status: 'out_of_stock' },
+    { name: 'Dairy Milk Chocolate', quantity: 40, cost: 150, status: 'in_stock' },
+    { name: 'Sunsilk Shampoo 200ml', quantity: 25, cost: 320, status: 'in_stock' },
+    { name: 'Surf Excel 1kg', quantity: 18, cost: 540, status: 'in_stock' }
   ]
 
   const insertP = db.prepare(
-    `INSERT INTO products (name, image, quantity, net_price, margin, status, created_at)
-     VALUES (@name, @image, @quantity, @net_price, @margin, @status, @created_at)`
+    `INSERT INTO products (name, image, quantity, cost, status, created_at)
+     VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
   )
   const created = []
   db.transaction(() => {
@@ -691,8 +859,8 @@ function seedIfEmpty() {
 
   const insertO = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (@status, @created_at, 0)')
   const insertI = db.prepare(
-    `INSERT INTO order_items (order_id, product_id, product_name, quantity, price, margin)
-     VALUES (@order_id, @product_id, @product_name, @quantity, @price, @margin)`
+    `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
+     VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
   )
   db.transaction(() => {
     for (let d = 13; d >= 0; d--) {
@@ -709,13 +877,17 @@ function seedIfEmpty() {
           if (picked.has(p.id)) continue
           picked.add(p.id)
           const qty = 1 + Math.floor(Math.random() * 5)
+          const markup = 5 + Math.floor(Math.random() * 25)
+          const totalPrice = (p.cost + markup) * qty
+          const profit = totalPrice - p.cost * qty
           insertI.run({
             order_id: info.lastInsertRowid,
             product_id: p.id,
             product_name: p.name,
             quantity: qty,
-            price: p.net_price,
-            margin: p.margin
+            total_price: totalPrice,
+            unit_cost: p.cost,
+            profit
           })
         }
       }
