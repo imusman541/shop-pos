@@ -4,6 +4,7 @@ import {
 } from 'recharts'
 import { money, int, daysAgo, fmtDate, pctChange } from '../lib/format'
 import DateRangePicker from '../components/DateRangePicker'
+import ProductMultiSelect from '../components/ProductMultiSelect'
 import { IconTrendUp, IconTrendDown } from '../components/icons'
 
 const COLORS = { sales: '#3b7dd8', profit: '#2fa36b', items: '#e8923b' }
@@ -54,6 +55,8 @@ function KpiDelta({ current, previous, format = 'money', periodDays }) {
 export default function Dashboard() {
   const [start, setStart] = useState(daysAgo(13))
   const [end, setEnd] = useState(daysAgo(0))
+  const [productIds, setProductIds] = useState([])
+  const [products, setProducts] = useState([])
   const [data, setData] = useState({
     series: [],
     totals: { sales: 0, profit: 0, items: 0 },
@@ -62,12 +65,20 @@ export default function Dashboard() {
   })
   const [loading, setLoading] = useState(true)
 
+  useEffect(() => {
+    window.api.listProductsBrief().then(setProducts)
+  }, [])
+
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await window.api.getDashboard({ startDate: start, endDate: end })
+    const res = await window.api.getDashboard({
+      startDate: start,
+      endDate: end,
+      productIds: productIds.map(Number)
+    })
     setData(res)
     setLoading(false)
-  }, [start, end])
+  }, [start, end, productIds])
 
   useEffect(() => { load() }, [load])
 
@@ -94,6 +105,13 @@ export default function Dashboard() {
           end={end}
           max={daysAgo(0)}
           onChange={handleRangeChange}
+        />
+        <ProductMultiSelect
+          products={products}
+          value={productIds}
+          onChange={setProductIds}
+          allowOutOfStock
+          emptyLabel="All products"
         />
       </div>
 

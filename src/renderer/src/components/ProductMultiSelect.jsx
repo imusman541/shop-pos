@@ -1,6 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-export default function ProductMultiSelect({ products, value = [], onChange, disabled }) {
+function isOutOfStock(p) {
+  return p.status === 'out_of_stock' || Number(p.quantity) <= 0
+}
+
+export default function ProductMultiSelect({
+  products, value = [], onChange, disabled, allowOutOfStock = false, emptyLabel
+}) {
   const rootRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -25,7 +31,10 @@ export default function ProductMultiSelect({ products, value = [], onChange, dis
     return p.name.toLowerCase().includes(q) || String(p.id).includes(q)
   })
 
-  const toggle = (id) => {
+  const toggle = (p) => {
+    const id = p.id
+    const out = !allowOutOfStock && isOutOfStock(p)
+    if (out && !selected.has(id)) return
     const next = new Set(selected)
     if (next.has(id)) next.delete(id)
     else next.add(id)
@@ -33,7 +42,7 @@ export default function ProductMultiSelect({ products, value = [], onChange, dis
   }
 
   const label = selected.size === 0
-    ? 'Search and select products…'
+    ? (emptyLabel || 'Search and select products…')
     : `${selected.size} product${selected.size === 1 ? '' : 's'} selected`
 
   return (
@@ -63,20 +72,30 @@ export default function ProductMultiSelect({ products, value = [], onChange, dis
             {filtered.length === 0 ? (
               <div className="multi-select-empty">No products match</div>
             ) : (
-              filtered.map((p) => (
-                <label key={p.id} className="multi-select-option">
-                  <input
-                    type="checkbox"
-                    className="row-check"
-                    checked={selected.has(p.id)}
-                    onChange={() => toggle(p.id)}
-                  />
-                  <span className="multi-select-option-text">
-                    <span className="id-pill">#{p.id}</span>
-                    {p.name}
-                  </span>
-                </label>
-              ))
+              filtered.map((p) => {
+                const out = !allowOutOfStock && isOutOfStock(p)
+                const checked = selected.has(p.id)
+                const optionDisabled = out && !checked
+                return (
+                  <label
+                    key={p.id}
+                    className={`multi-select-option${optionDisabled ? ' disabled' : ''}`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="row-check"
+                      checked={checked}
+                      disabled={optionDisabled}
+                      onChange={() => toggle(p)}
+                    />
+                    <span className="multi-select-option-text">
+                      <span className="id-pill">#{p.id}</span>
+                      {p.name}
+                      {isOutOfStock(p) && <span className="out-of-stock-label">(Out of Stock)</span>}
+                    </span>
+                  </label>
+                )
+              })
             )}
           </div>
         </div>
