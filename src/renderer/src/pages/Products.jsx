@@ -9,11 +9,11 @@ import {
 } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { name: '', image: null, quantity: '', net_price: '', margin: '', status: 'in_stock' }
+const EMPTY = { name: '', image: null, quantity: '', cost: '', status: 'in_stock' }
 
 export default function Products() {
   const toast = useToast()
-  const [filters, setFilters] = useState({ search: '', status: '', priceOp: 'gt', priceValue: '' })
+  const [filters, setFilters] = useState({ search: '', status: '', costOp: 'gt', costValue: '' })
   const [page, setPage] = useState(1)
   const [data, setData] = useState({ rows: [], total: 0 })
   const [loading, setLoading] = useState(true)
@@ -29,8 +29,8 @@ export default function Products() {
     const res = await window.api.getProducts({
       search: filters.search,
       status: filters.status,
-      priceOp: filters.priceValue !== '' ? filters.priceOp : '',
-      priceValue: filters.priceValue,
+      costOp: filters.costValue !== '' ? filters.costOp : '',
+      costValue: filters.costValue,
       page,
       pageSize: PAGE_SIZE
     })
@@ -71,8 +71,8 @@ export default function Products() {
     setEditing(p)
     setForm({
       name: p.name, image: p.image,
-      quantity: p.quantity, net_price: p.net_price,
-      margin: p.margin, status: p.status
+      quantity: p.quantity, cost: p.cost,
+      status: p.status
     })
     setModalOpen(true)
   }
@@ -170,8 +170,8 @@ export default function Products() {
           </select>
         </div>
         <div className="field field-filter">
-          <label>Price is</label>
-          <select value={filters.priceOp} onChange={(e) => updateFilter({ priceOp: e.target.value })}>
+          <label>Cost is</label>
+          <select value={filters.costOp} onChange={(e) => updateFilter({ costOp: e.target.value })}>
             <option value="gt">Greater than</option>
             <option value="lt">Less than</option>
             <option value="eq">Equal to</option>
@@ -182,12 +182,12 @@ export default function Products() {
           <input
             type="number"
             placeholder="e.g. 100"
-            value={filters.priceValue}
-            onChange={(e) => updateFilter({ priceValue: e.target.value })}
+            value={filters.costValue}
+            onChange={(e) => updateFilter({ costValue: e.target.value })}
           />
         </div>
-        {(filters.search || filters.status || filters.priceValue !== '') && (
-          <button className="btn btn-ghost" onClick={() => updateFilter({ search: '', status: '', priceValue: '' })}>
+        {(filters.search || filters.status || filters.costValue !== '') && (
+          <button className="btn btn-ghost" onClick={() => updateFilter({ search: '', status: '', costValue: '' })}>
             Clear
           </button>
         )}
@@ -208,7 +208,7 @@ export default function Products() {
           </div>
         )}
         <div className="table-wrap">
-          <table>
+          <table className="products-table">
             <thead>
               <tr>
                 <th className="check-col">
@@ -225,18 +225,17 @@ export default function Products() {
                 <th>Product #</th>
                 <th>Image</th>
                 <th>Name</th>
-                <th className="right">Quantity</th>
-                <th className="right">Net Price</th>
-                <th className="right">Margin / Profit</th>
+                <th>Quantity Available</th>
+                <th>Cost</th>
                 <th>Status</th>
-                <th className="right">Actions</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={8}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={9}>
+                <tr><td colSpan={8}>
                   <div className="empty-state">
                     <strong>No products found</strong>
                     Create your first product or adjust the filters.
@@ -259,15 +258,14 @@ export default function Products() {
                       <ProductThumb src={p.image} name={p.name} />
                     </td>
                     <td>{p.name}</td>
-                    <td className="right num">{int(p.quantity)}</td>
-                    <td className="right num">{money(p.net_price)}</td>
-                    <td className="right num">{money(p.margin)}</td>
+                    <td className="num">{int(p.quantity)}</td>
+                    <td className="num">{money(p.cost)}</td>
                     <td>
                       <span className={`badge ${p.status === 'in_stock' ? 'in' : 'out'}`}>
                         {p.status === 'in_stock' ? 'In Stock' : 'Out of Stock'}
                       </span>
                     </td>
-                    <td className="right">
+                    <td>
                       <div className="row-actions">
                         <button className="btn btn-sm" onClick={() => openEdit(p)}><IconEdit /></button>
                         <button className="btn btn-sm btn-danger" onClick={() => remove(p)}><IconTrash /></button>
@@ -319,7 +317,7 @@ export default function Products() {
             </div>
 
             <div>
-              <label>Quantity</label>
+              <label>Quantity Available</label>
               <input type="number" value={form.quantity}
                 onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} />
             </div>
@@ -333,15 +331,9 @@ export default function Products() {
             </div>
 
             <div>
-              <label>Net Price</label>
-              <input type="number" value={form.net_price}
-                onChange={(e) => setForm((f) => ({ ...f, net_price: e.target.value }))} />
-            </div>
-
-            <div>
-              <label>Margin / Profit</label>
-              <input type="number" value={form.margin}
-                onChange={(e) => setForm((f) => ({ ...f, margin: e.target.value }))} />
+              <label>Cost</label>
+              <input type="number" value={form.cost}
+                onChange={(e) => setForm((f) => ({ ...f, cost: e.target.value }))} />
             </div>
           </div>
       </Drawer>
