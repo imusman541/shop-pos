@@ -9,7 +9,7 @@ import BackupButton from './components/BackupButton'
 
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', Icon: IconDashboard, Page: Dashboard },
-  { key: 'products', label: 'Products', Icon: IconBox, Page: Products },
+  { key: 'products', label: 'Inventory', Icon: IconBox, Page: Products },
   { key: 'orders', label: 'Orders', Icon: IconCart, Page: Orders }
 ]
 
