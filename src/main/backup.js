@@ -33,17 +33,17 @@ let timer = null
 const backupsDir = () => path.join(app.getPath('userData'), 'backups')
 const latestPath = () => path.join(app.getPath('userData'), 'pos-backup.db')
 
-function stamp() {
+const stamp = () => {
   const d = new Date()
   const p = (n) => String(n).padStart(2, '0')
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
 }
 
-function ensureDir(dir) {
+const ensureDir = (dir) => {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
 }
 
-function prune(dir) {
+const prune = (dir) => {
   try {
     const files = fs
       .readdirSync(dir)
@@ -58,7 +58,7 @@ function prune(dir) {
   }
 }
 
-function run(cmd, args, cwd) {
+const run = (cmd, args, cwd) => {
   return new Promise((resolve, reject) => {
     execFile(cmd, args, { cwd }, (err, stdout, stderr) => {
       if (err) reject(new Error(stderr || err.message))
@@ -67,7 +67,7 @@ function run(cmd, args, cwd) {
   })
 }
 
-async function pushToGit(sourceFile) {
+const pushToGit = async (sourceFile) => {
   const { repoDir, branch, commitPrefix } = CONFIG.git
   if (!repoDir || !fs.existsSync(repoDir)) {
     return { ok: false, reason: 'git repoDir not found' }
@@ -89,7 +89,7 @@ async function pushToGit(sourceFile) {
   }
 }
 
-export async function runBackupNow() {
+export const runBackupNow = async () => {
   if (running) return { ok: false, reason: 'A backup is already in progress' }
   running = true
   try {
@@ -123,7 +123,7 @@ export async function runBackupNow() {
   }
 }
 
-export function scheduleBackups() {
+export const scheduleBackups = () => {
   setTimeout(() => runBackupNow(), 5000) // shortly after launch
   if (timer) clearInterval(timer)
   timer = setInterval(() => runBackupNow(), CONFIG.intervalMinutes * 60 * 1000)

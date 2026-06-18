@@ -16,11 +16,11 @@ const SOURCE_CANDIDATES = [
   path.join(ROOT, 'src/renderer/public/app-icon.png')
 ]
 
-function resolveSource() {
+const resolveSource = () => {
   return SOURCE_CANDIDATES.find((p) => fs.existsSync(p))
 }
 
-async function makeRoundedIcon(sourcePath, outPng) {
+const makeRoundedIcon = async (sourcePath, outPng) => {
   const inner = SIZE - PADDING * 2
   const roundedBg = Buffer.from(
     `<svg width="${SIZE}" height="${SIZE}">
@@ -49,7 +49,7 @@ async function makeRoundedIcon(sourcePath, outPng) {
     .toFile(outPng)
 }
 
-function makeIcns(pngPath, icnsPath) {
+const makeIcns = (pngPath, icnsPath) => {
   const iconset = path.join(BUILD, 'icon.iconset')
   fs.rmSync(iconset, { recursive: true, force: true })
   fs.mkdirSync(iconset, { recursive: true })
@@ -77,7 +77,7 @@ function makeIcns(pngPath, icnsPath) {
   fs.rmSync(iconset, { recursive: true, force: true })
 }
 
-function patchPlist(plistPath) {
+const patchPlist = (plistPath) => {
   let xml = fs.readFileSync(plistPath, 'utf8')
   xml = xml.replace(
     /(<key>CFBundleDisplayName<\/key>\s*<string>)[^<]*(<\/string>)/,
@@ -90,7 +90,7 @@ function patchPlist(plistPath) {
   fs.writeFileSync(plistPath, xml)
 }
 
-function rebrandElectronDev(icnsPath) {
+const rebrandElectronDev = (icnsPath) => {
   if (process.platform !== 'darwin') return
 
   const contents = path.join(ROOT, 'node_modules/electron/dist/Electron.app/Contents')
@@ -107,7 +107,7 @@ function rebrandElectronDev(icnsPath) {
   console.log(`[branding] Dev app renamed to "${APP_NAME}"`)
 }
 
-async function main() {
+const main = async () => {
   fs.mkdirSync(BUILD, { recursive: true })
 
   const source = resolveSource()

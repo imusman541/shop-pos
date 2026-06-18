@@ -2,7 +2,7 @@ import React, { createContext, useCallback, useContext, useState } from 'react'
 
 const ToastCtx = createContext(() => {})
 
-export function ToastProvider({ children }) {
+export const ToastProvider = ({ children }) => {
   const [msg, setMsg] = useState(null)
 
   const notify = useCallback((text) => {
@@ -19,6 +19,6 @@ export function ToastProvider({ children }) {
   )
 }
 
-export function useToast() {
+export const useToast = () => {
   return useContext(ToastCtx)
 }

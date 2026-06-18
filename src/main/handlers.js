@@ -2,7 +2,7 @@ import * as db from './database'
 import * as auth from './auth'
 import { runBackupNow } from './backup'
 
-export function registerHandlers(ipcMain) {
+export const registerHandlers = (ipcMain) => {
   // Auth
   ipcMain.handle('auth:status', () => auth.getAuthStatus())
   ipcMain.handle('auth:signUp', (_e, data) => auth.signUp(data))

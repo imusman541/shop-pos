@@ -2,7 +2,7 @@ import React from 'react'
 import SignIn from './SignIn'
 import SignUp from './SignUp'
 
-export default function Auth({ hasAccount, onAuth }) {
+const Auth = ({ hasAccount, onAuth }) => {
   return (
     <div className="auth-screen">
       <div className="auth-card">
@@ -30,3 +30,5 @@ export default function Auth({ hasAccount, onAuth }) {
     </div>
   )
 }
+
+export default Auth;

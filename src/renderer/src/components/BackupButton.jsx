@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useToast } from './Toast'
 
-export default function BackupButton() {
+const BackupButton = () => {
   const toast = useToast()
   const [busy, setBusy] = useState(false)
 
@@ -21,3 +21,5 @@ export default function BackupButton() {
     </button>
   )
 }
+
+export default BackupButton;

@@ -9,7 +9,7 @@ import { IconTrendUp, IconTrendDown } from '../components/icons'
 
 const COLORS = { sales: '#3b7dd8', profit: '#2fa36b', items: '#e8923b' }
 
-function CustomTooltip({ active, payload, label }) {
+const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload || !payload.length) return null
   const byKey = {}
   payload.forEach((p) => { byKey[p.dataKey] = p.value })
@@ -32,7 +32,7 @@ function CustomTooltip({ active, payload, label }) {
   )
 }
 
-function KpiDelta({ current, previous, format = 'money', periodDays }) {
+const KpiDelta = ({ current, previous, format = 'money', periodDays }) => {
   const change = pctChange(current, previous)
   const up = change >= 0
   const display = format === 'money' ? money(previous) : int(previous)
@@ -52,7 +52,7 @@ function KpiDelta({ current, previous, format = 'money', periodDays }) {
   )
 }
 
-export default function Dashboard() {
+const Dashboard = () => {
   const [start, setStart] = useState(daysAgo(13))
   const [end, setEnd] = useState(daysAgo(0))
   const [productIds, setProductIds] = useState([])
@@ -218,3 +218,5 @@ export default function Dashboard() {
     </div>
   )
 }
+
+export default Dashboard;

@@ -11,7 +11,7 @@ import {
 const PAGE_SIZE = 25
 const EMPTY = { name: '', image: null, quantity: '', cost: '', status: 'in_stock' }
 
-export default function Products() {
+const Products = () => {
   const toast = useToast()
   const [filters, setFilters] = useState({ search: '', status: '', costOp: 'gt', costValue: '' })
   const [page, setPage] = useState(1)
@@ -340,3 +340,5 @@ export default function Products() {
     </div>
   )
 }
+
+export default Products;

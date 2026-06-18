@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-export default function Drawer({ open, title, onClose, children, footer, wide }) {
+const Drawer = ({ open, title, onClose, children, footer, wide }) => {
   const [mounted, setMounted] = useState(false)
   const [active, setActive] = useState(false)
 
@@ -42,3 +42,5 @@ export default function Drawer({ open, title, onClose, children, footer, wide })
     </div>
   )
 }
+
+export default Drawer;

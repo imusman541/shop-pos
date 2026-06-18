@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { useToast } from '../components/Toast'
 import { emailError } from '../lib/validate'
 
-export default function SignUp({ onSuccess }) {
+const SignUp = ({ onSuccess }) => {
   const toast = useToast()
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -73,3 +73,5 @@ export default function SignUp({ onSuccess }) {
     </form>
   )
 }
+
+export default SignUp;

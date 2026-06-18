@@ -4,16 +4,16 @@ import { IconCalendar } from './icons'
 
 const WEEKDAYS = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
 
-function toIso(y, m, d) {
+const toIso = (y, m, d) => {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
-function monthStart(iso) {
+const monthStart = (iso) => {
   const d = parseInputDate(iso)
   return new Date(d.getFullYear(), d.getMonth(), 1)
 }
 
-function buildMonthGrid(year, month) {
+const buildMonthGrid = (year, month) => {
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7
   const daysInMonth = new Date(year, month + 1, 0).getDate()
   const prevMonth = month === 0 ? 11 : month - 1
@@ -38,15 +38,15 @@ function buildMonthGrid(year, month) {
   return cells
 }
 
-function normalizeRange(a, b) {
+const normalizeRange = (a, b) => {
   return a <= b ? { start: a, end: b } : { start: b, end: a }
 }
 
-function inRange(iso, start, end) {
+const inRange = (iso, start, end) => {
   return iso >= start && iso <= end
 }
 
-export default function DateRangePicker({ start, end, onChange, max }) {
+const DateRangePicker = ({ start, end, onChange, max }) => {
   const rootRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [viewMonth, setViewMonth] = useState(() => monthStart(start))
@@ -183,3 +183,5 @@ export default function DateRangePicker({ start, end, onChange, max }) {
     </div>
   )
 }
+
+export default DateRangePicker;

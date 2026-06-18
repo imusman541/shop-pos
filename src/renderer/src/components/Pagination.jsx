@@ -1,6 +1,6 @@
 import React from 'react'
 
-export default function Pagination({ page, pageSize, total, onChange }) {
+const Pagination = ({ page, pageSize, total, onChange }) => {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
   if (total === 0) return null
 
@@ -41,3 +41,5 @@ export default function Pagination({ page, pageSize, total, onChange }) {
     </div>
   )
 }
+
+export default Pagination;

@@ -13,7 +13,7 @@ const NAV = [
   { key: 'orders', label: 'Orders', Icon: IconCart, Page: Orders }
 ]
 
-export default function App() {
+const App = () => {
   const [active, setActive] = useState('dashboard')
   const [auth, setAuth] = useState(null)
 
@@ -97,3 +97,5 @@ export default function App() {
     </ToastProvider>
   )
 }
+
+export default App;

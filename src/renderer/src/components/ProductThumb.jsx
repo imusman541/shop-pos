@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 
 const PREVIEW_SIZE = 200
 
-export default function ProductThumb({ src, name }) {
+const ProductThumb = ({ src, name }) => {
   const anchorRef = useRef(null)
   const [visible, setVisible] = useState(false)
   const [coords, setCoords] = useState({ x: 0, y: 0 })
@@ -42,3 +42,5 @@ export default function ProductThumb({ src, name }) {
     </>
   )
 }
+
+export default ProductThumb;

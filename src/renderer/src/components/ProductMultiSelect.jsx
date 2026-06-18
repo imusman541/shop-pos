@@ -1,12 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 
-function isOutOfStock(p) {
+const isOutOfStock = (p) => {
   return p.status === 'out_of_stock' || Number(p.quantity) <= 0
 }
 
-export default function ProductMultiSelect({
+const ProductMultiSelect = ({
   products, value = [], onChange, disabled, allowOutOfStock = false, emptyLabel
-}) {
+}) => {
   const rootRef = useRef(null)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
@@ -103,3 +103,5 @@ export default function ProductMultiSelect({
     </div>
   )
 }
+
+export default ProductMultiSelect;

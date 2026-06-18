@@ -12,7 +12,7 @@ const USER_DATA_DIR = 'shop-pos'
 app.setName(APP_NAME)
 app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR))
 
-function resolveIconPath() {
+const resolveIconPath = () => {
   const candidates = [
     path.join(__dirname, '../../build/icon.png'),
     path.join(app.getAppPath(), 'build/icon.png')
@@ -20,7 +20,7 @@ function resolveIconPath() {
   return candidates.find((p) => fs.existsSync(p)) || null
 }
 
-function loadAppIcon() {
+const loadAppIcon = () => {
   const iconPath = resolveIconPath()
   if (!iconPath) return null
   const image = nativeImage.createFromPath(iconPath)
@@ -31,7 +31,7 @@ function loadAppIcon() {
   return image
 }
 
-function createWindow() {
+const createWindow = () => {
   const icon = loadAppIcon()
   const win = new BrowserWindow({
     width: 1320,

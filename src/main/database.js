@@ -6,18 +6,18 @@ import { app, dialog } from 'electron'
 
 let db
 
-function nowISO() {
+const nowISO = () => {
   return new Date().toISOString()
 }
 
-function num(v, fallback = 0) {
+const num = (v, fallback = 0) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
 }
 
 /* ---------------------------------------------------------------- setup */
 
-function resolveDbPath() {
+const resolveDbPath = () => {
   const canonical = path.join(app.getPath('userData'), 'pos.db')
   const appData = app.getPath('appData')
   const legacy = [
@@ -38,7 +38,7 @@ function resolveDbPath() {
   return canonical
 }
 
-function init() {
+const init = () => {
   const dbPath = resolveDbPath()
   db = new Database(dbPath)
   db.pragma('journal_mode = DELETE')
@@ -75,7 +75,7 @@ function init() {
   return dbPath
 }
 
-function migrateAppUser() {
+const migrateAppUser = () => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_user (
       id            INTEGER PRIMARY KEY CHECK (id = 1),
@@ -87,15 +87,15 @@ function migrateAppUser() {
   `)
 }
 
-function hasAppUser() {
+const hasAppUser = () => {
   return !!db.prepare('SELECT 1 FROM app_user WHERE id = 1').get()
 }
 
-function getAppUser() {
+const getAppUser = () => {
   return db.prepare('SELECT id, name, email, password_hash, created_at FROM app_user WHERE id = 1').get()
 }
 
-function createAppUser({ name, email, passwordHash }) {
+const createAppUser = ({ name, email, passwordHash }) => {
   if (hasAppUser()) throw new Error('Account already created')
 
   db.prepare(
@@ -113,17 +113,17 @@ function createAppUser({ name, email, passwordHash }) {
 
 /* ------------------------------------------------------------- products */
 
-function getProductById(id) {
+const getProductById = (id) => {
   return db.prepare('SELECT * FROM products WHERE id = ?').get(id)
 }
 
-function listProductsBrief() {
+const listProductsBrief = () => {
   return db
     .prepare('SELECT id, name, cost, quantity, status FROM products ORDER BY name')
     .all()
 }
 
-function getProducts(filters = {}) {
+const getProducts = (filters = {}) => {
   const search = filters.search || ''
   const status = filters.status || ''
   const costOp = filters.costOp || ''
@@ -157,7 +157,7 @@ function getProducts(filters = {}) {
   return { rows, total, page, pageSize }
 }
 
-function createProduct(data) {
+const createProduct = (data) => {
   const info = db
     .prepare(
       `INSERT INTO products (name, image, quantity, cost, status, created_at)
@@ -174,7 +174,7 @@ function createProduct(data) {
   return getProductById(info.lastInsertRowid)
 }
 
-function updateProduct({ id, data }) {
+const updateProduct = ({ id, data }) => {
   db.prepare(
     `UPDATE products
      SET name = @name, image = @image, quantity = @quantity,
@@ -191,12 +191,12 @@ function updateProduct({ id, data }) {
   return getProductById(id)
 }
 
-function deleteProduct(id) {
+const deleteProduct = (id) => {
   db.prepare('DELETE FROM products WHERE id = ?').run(id)
   return { ok: true }
 }
 
-function deleteProducts(ids = []) {
+const deleteProducts = (ids = []) => {
   const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
   if (!list.length) return { ok: true, count: 0 }
   const placeholders = list.map(() => '?').join(', ')
@@ -206,11 +206,11 @@ function deleteProducts(ids = []) {
 
 /* --------------------------------------------------------------- orders */
 
-function isUnset(v) {
+const isUnset = (v) => {
   return v === '' || v === null || v === undefined
 }
 
-function migrateOrdersSchema() {
+const migrateOrdersSchema = () => {
   const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
   if (!cols.includes('product_id')) {
     db.exec(`
@@ -273,14 +273,14 @@ function migrateOrdersSchema() {
   db.exec('DROP TABLE orders; ALTER TABLE orders_new RENAME TO orders;')
 }
 
-function migrateOrderArchive() {
+const migrateOrderArchive = () => {
   const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
   if (!cols.includes('isArchive')) {
     db.exec('ALTER TABLE orders ADD COLUMN isArchive INTEGER NOT NULL DEFAULT 0')
   }
 }
 
-function migrateOrderItemsSchema() {
+const migrateOrderItemsSchema = () => {
   const cols = db.prepare('PRAGMA table_info(order_items)').all().map((c) => c.name)
   if (!cols.length) return
 
@@ -313,7 +313,7 @@ function migrateOrderItemsSchema() {
   `)
 }
 
-function migrateProductsSchema() {
+const migrateProductsSchema = () => {
   const cols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name)
   if (!cols.length) return
 
@@ -341,7 +341,7 @@ function migrateProductsSchema() {
   `)
 }
 
-function inventoryTotals(items) {
+const inventoryTotals = (items) => {
   const totals = new Map()
   for (const item of items) {
     const productId = item.product_id ? num(item.product_id) : null
@@ -351,7 +351,7 @@ function inventoryTotals(items) {
   return totals
 }
 
-function adjustInventory(items, sign) {
+const adjustInventory = (items, sign) => {
   const totals = inventoryTotals(items)
   const getProduct = db.prepare('SELECT id, name, quantity, status FROM products WHERE id = ?')
   const update = db.prepare('UPDATE products SET quantity = @quantity, status = @status WHERE id = @id')
@@ -374,15 +374,15 @@ function adjustInventory(items, sign) {
   }
 }
 
-function restoreInventory(items) {
+const restoreInventory = (items) => {
   adjustInventory(items, 1)
 }
 
-function deductInventory(items) {
+const deductInventory = (items) => {
   adjustInventory(items, -1)
 }
 
-function resolveItemPricing(data, existingItem = null) {
+const resolveItemPricing = (data, existingItem = null) => {
   const productId = data.product_id ? num(data.product_id) : null
   const product = productId ? getProductById(productId) : null
 
@@ -418,7 +418,7 @@ function resolveItemPricing(data, existingItem = null) {
   }
 }
 
-function mapOrderItem(row) {
+const mapOrderItem = (row) => {
   return {
     id: row.id,
     product_id: row.product_id,
@@ -430,7 +430,7 @@ function mapOrderItem(row) {
   }
 }
 
-function attachItems(order) {
+const attachItems = (order) => {
   const items = db
     .prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id')
     .all(order.id)
@@ -438,13 +438,13 @@ function attachItems(order) {
   return { ...order, items }
 }
 
-function getOrderById(id) {
+const getOrderById = (id) => {
   const order = db.prepare('SELECT id, status, created_at FROM orders WHERE id = ?').get(id)
   if (!order) return null
   return attachItems(order)
 }
 
-function normalizeOrderItems(data) {
+const normalizeOrderItems = (data) => {
   if (Array.isArray(data.items) && data.items.length) return data.items
   if (data.product_id || data.product_name) {
     return [{
@@ -458,7 +458,7 @@ function normalizeOrderItems(data) {
   return []
 }
 
-function getOrders(filters = {}) {
+const getOrders = (filters = {}) => {
   const page = Math.max(1, num(filters.page, 1))
   const pageSize = Math.max(1, num(filters.pageSize, 25))
 
@@ -506,7 +506,7 @@ function getOrders(filters = {}) {
   return { rows, total, page, pageSize }
 }
 
-function createOrder(data) {
+const createOrder = (data) => {
   const items = normalizeOrderItems(data)
   if (!items.length) throw new Error('Order must include at least one product')
 
@@ -533,7 +533,7 @@ function createOrder(data) {
   return getOrderById(orderId)
 }
 
-function updateOrder({ id, data }) {
+const updateOrder = ({ id, data }) => {
   const items = normalizeOrderItems(data)
   if (!items.length) throw new Error('Order must include at least one product')
 
@@ -566,7 +566,7 @@ function updateOrder({ id, data }) {
   return getOrderById(id)
 }
 
-function deleteOrder(id) {
+const deleteOrder = (id) => {
   const order = db.prepare('SELECT status FROM orders WHERE id = ? AND isArchive = 0').get(id)
   const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
 
@@ -578,7 +578,7 @@ function deleteOrder(id) {
   return { ok: true, count: order ? 1 : 0 }
 }
 
-function deleteOrders(ids = []) {
+const deleteOrders = (ids = []) => {
   const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
   if (!list.length) return { ok: true, count: 0 }
   const placeholders = list.map(() => '?').join(', ')
@@ -601,38 +601,38 @@ function deleteOrders(ids = []) {
 /* ------------------------------------------------------------ dashboard */
 // Only DONE orders count toward sales / profit / items sold.
 
-function parseIsoDate(iso) {
+const parseIsoDate = (iso) => {
   const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number)
   return new Date(y, m - 1, d)
 }
 
-function toIsoDate(d) {
+const toIsoDate = (d) => {
   const y = d.getFullYear()
   const m = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
   return `${y}-${m}-${day}`
 }
 
-function daysInRange(start, end) {
+const daysInRange = (start, end) => {
   const a = parseIsoDate(start)
   const b = parseIsoDate(end)
   return Math.round((b - a) / 86400000) + 1
 }
 
-function addDaysIso(iso, n) {
+const addDaysIso = (iso, n) => {
   const d = parseIsoDate(iso)
   d.setDate(d.getDate() + n)
   return toIsoDate(d)
 }
 
-function previousPeriodDates(start, end) {
+const previousPeriodDates = (start, end) => {
   const days = daysInRange(start, end)
   const prevEnd = addDaysIso(start, -1)
   const prevStart = addDaysIso(prevEnd, -(days - 1))
   return { startDate: prevStart, endDate: prevEnd, days }
 }
 
-function fillSeriesGaps(rows, startDate, endDate) {
+const fillSeriesGaps = (rows, startDate, endDate) => {
   if (!startDate || !endDate) return rows
   const byDate = {}
   rows.forEach((r) => { byDate[r.date] = r })
@@ -643,14 +643,14 @@ function fillSeriesGaps(rows, startDate, endDate) {
   return result
 }
 
-function normalizeProductIds(filters = {}) {
+const normalizeProductIds = (filters = {}) => {
   const raw = filters.productIds
   if (raw == null || raw === '') return []
   const list = Array.isArray(raw) ? raw : [raw]
   return [...new Set(list.map((id) => Number(id)).filter((id) => id > 0))]
 }
 
-function productIdsFilter(filters, params, alias = 'i') {
+const productIdsFilter = (filters, params, alias = 'i') => {
   const ids = normalizeProductIds(filters)
   if (!ids.length) return ''
   const placeholders = ids.map((_, idx) => `@pid${idx}`).join(', ')
@@ -658,7 +658,7 @@ function productIdsFilter(filters, params, alias = 'i') {
   return ` AND ${alias}.product_id IN (${placeholders})`
 }
 
-function dashboardBaseWhere(filters, params) {
+const dashboardBaseWhere = (filters, params) => {
   const where = ["o.status = 'DONE'", 'o.isArchive = 0']
 
   if (filters.startDate) {
@@ -673,7 +673,7 @@ function dashboardBaseWhere(filters, params) {
   return where
 }
 
-function getOrderTotalsForRange(startDate, endDate, filters = {}) {
+const getOrderTotalsForRange = (startDate, endDate, filters = {}) => {
   const params = { startDate, endDate }
   const where = dashboardBaseWhere({ ...filters, startDate, endDate }, params)
   const productFilter = productIdsFilter(filters, params)
@@ -697,7 +697,7 @@ function getOrderTotalsForRange(startDate, endDate, filters = {}) {
   }
 }
 
-function getDashboard(filters = {}) {
+const getDashboard = (filters = {}) => {
   const params = {}
   const where = dashboardBaseWhere(filters, params)
   const productFilter = productIdsFilter(filters, params)
@@ -746,7 +746,7 @@ function getDashboard(filters = {}) {
 
 /* --------------------------------------------------------- excel import/export */
 
-async function exportProducts() {
+const exportProducts = async () => {
   const rows = db
     .prepare(
       `SELECT id AS product_number, name, quantity, cost, status, created_at
@@ -756,7 +756,7 @@ async function exportProducts() {
   return writeSheet(rows, 'Products', 'products.xlsx')
 }
 
-async function exportOrders() {
+const exportOrders = async () => {
   const rows = db
     .prepare(
       `SELECT o.id AS order_number, i.product_id, i.product_name, i.quantity,
@@ -770,7 +770,7 @@ async function exportOrders() {
   return writeSheet(rows, 'Orders', 'orders.xlsx')
 }
 
-async function writeSheet(rows, sheetName, defaultName) {
+const writeSheet = async (rows, sheetName, defaultName) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,
     filters: [{ name: 'Excel Workbook', extensions: ['xlsx'] }]
@@ -784,7 +784,7 @@ async function writeSheet(rows, sheetName, defaultName) {
   return { canceled: false, filePath, count: rows.length }
 }
 
-async function importProducts() {
+const importProducts = async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
     properties: ['openFile'],
     filters: [{ name: 'Spreadsheet', extensions: ['xlsx', 'xls', 'csv'] }]
@@ -832,7 +832,7 @@ async function importProducts() {
 
 /* ----------------------------------------------------------------- seed */
 
-function seedIfEmpty() {
+const seedIfEmpty = () => {
   const existing = db.prepare('SELECT COUNT(*) AS c FROM products').get().c
   if (existing > 0) return
 
@@ -895,7 +895,7 @@ function seedIfEmpty() {
   })()
 }
 
-function backupTo(destPath) {
+const backupTo = (destPath) => {
   // Online backup: safe even while the app is running; includes WAL data.
   return db.backup(destPath)
 }

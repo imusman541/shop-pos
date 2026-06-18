@@ -10,39 +10,39 @@ import { IconPlus, IconExport, IconEdit, IconTrash, IconInfo } from '../componen
 const PAGE_SIZE = 25
 const EMPTY = { status: 'DONE', items: [] }
 
-function orderQty(items) {
+const orderQty = (items) => {
   return items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
 }
 
-function orderTotal(items) {
+const orderTotal = (items) => {
   return items.reduce((s, i) => s + (Number(i.total_price) || 0), 0)
 }
 
-function orderProfit(items) {
+const orderProfit = (items) => {
   return items.reduce((s, i) => s + (Number(i.profit) || 0), 0)
 }
 
-function lineCost(item) {
+const lineCost = (item) => {
   return (Number(item.unit_cost) || 0) * (Number(item.quantity) || 0)
 }
 
-function orderCost(items) {
+const orderCost = (items) => {
   return items.reduce((s, i) => s + lineCost(i), 0)
 }
 
-function productCountLabel(items) {
+const productCountLabel = (items) => {
   const n = items.length
   if (!n) return null
   return `${n} product${n === 1 ? '' : 's'}`
 }
 
-function isValidTotalPrice(v) {
+const isValidTotalPrice = (v) => {
   if (v === '' || v === null || v === undefined) return false
   const n = Number(v)
   return Number.isFinite(n) && n > 0
 }
 
-function TotalPriceLabel() {
+const TotalPriceLabel = () => {
   return (
     <span className="label-with-info">
       Total Price
@@ -54,7 +54,7 @@ function TotalPriceLabel() {
   )
 }
 
-export default function Orders() {
+const Orders = () => {
   const toast = useToast()
   const [filters, setFilters] = useState({
     orderId: '', productId: '', productName: '', startDate: daysAgo(30), endDate: daysAgo(0), status: ''
@@ -507,3 +507,5 @@ export default function Orders() {
     </div>
   )
 }
+
+export default Orders;
