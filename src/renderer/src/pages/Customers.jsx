@@ -7,7 +7,7 @@ import { IconEdit, IconExport, IconPlus, IconTrash } from '../components/icons'
 
 const PAGE_SIZE = 25
 const EMPTY_CUSTOMER = { name: '', phone: '', address: '', notes: '', opening_balance: '' }
-const EMPTY_ENTRY = { amount: '', method: 'Cash', description: '' }
+const EMPTY_ENTRY = { amount: '', method: '', description: '' }
 
 const Customers = () => {
   const toast = useToast()
@@ -413,7 +413,18 @@ const Customers = () => {
         wide
         className="khata-drawer"
         open={!!viewing}
-        title={khata ? `${khata.customer.name} · Khata` : 'Customer Khata'}
+        title={khata ? (
+          <span className="khata-titlebar">
+            <span className="khata-title-name">{khata.customer.name} · Khata</span>
+            <span className="khata-title-balance">
+              <span>{balanceInfo(khata.customer.balance).label === 'Clear' ? 'Total Amount' : balanceInfo(khata.customer.balance).label}</span>
+              <span>=</span>
+              <span className={`money-chip ${balanceInfo(khata.customer.balance).chip}`}>
+                {money(balanceInfo(khata.customer.balance).amount)}
+              </span>
+            </span>
+          </span>
+        ) : 'Customer Khata'}
         onClose={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()) }}
         footer={
           <>
@@ -433,10 +444,10 @@ const Customers = () => {
         {khata && (
           <div className="khata-detail">
             <div className="khata-summary">
-              <div><span>Total Purchased</span><strong>{money(khata.customer.total_purchased)}</strong></div>
-              <div><span>Total Paid</span><strong>{money(khata.customer.total_paid)}</strong></div>
-              <div><span>Total To Pay</span><strong>{money(khata.customer.total_payable)}</strong></div>
-              <div>
+              <div className="khata-summary-card purchased"><span>Total Purchased</span><strong>{money(khata.customer.total_purchased)}</strong></div>
+              <div className="khata-summary-card paid"><span>Total Paid</span><strong>{money(khata.customer.total_paid)}</strong></div>
+              <div className="khata-summary-card payable"><span>Total To Pay</span><strong>{money(khata.customer.total_payable)}</strong></div>
+              <div className={`khata-summary-card ${balanceInfo(khata.customer.balance).chip}`}>
                 <span>{balanceInfo(khata.customer.balance).label}</span>
                 <strong>{money(balanceInfo(khata.customer.balance).amount)}</strong>
               </div>
@@ -454,6 +465,7 @@ const Customers = () => {
                   onChange={(e) => setPayment((p) => ({ ...p, amount: e.target.value }))}
                 />
                 <select value={payment.method} onChange={(e) => setPayment((p) => ({ ...p, method: e.target.value }))}>
+                  <option value="">Method</option>
                   <option>Cash</option>
                   <option>Bank</option>
                   <option>JazzCash</option>
@@ -461,7 +473,7 @@ const Customers = () => {
                   <option>Other</option>
                 </select>
                 <input
-                  placeholder="Note"
+                  placeholder="Description"
                   value={payment.description}
                   onChange={(e) => setPayment((p) => ({ ...p, description: e.target.value }))}
                 />
@@ -482,6 +494,15 @@ const Customers = () => {
                   placeholder="Description"
                   value={charge.description}
                   onChange={(e) => setCharge((p) => ({ ...p, description: e.target.value }))}
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="Amount"
+                  value={charge.amount}
+                  style={{ visibility: 'hidden' }}
+                  onChange={(e) => setCharge((p) => ({ ...p, amount: e.target.value }))}
                 />
                 <button className="btn btn-solid-danger" onClick={() => addEntry('charge')}>Add charge</button>
               </div>
@@ -505,7 +526,7 @@ const Customers = () => {
                   <option>Other</option>
                 </select>
                 <input
-                  placeholder="Reason"
+                  placeholder="Description"
                   value={payable.description}
                   onChange={(e) => setPayable((p) => ({ ...p, description: e.target.value }))}
                 />
@@ -572,7 +593,11 @@ const Customers = () => {
                         </td>
                         <td>{fmtDate(row.created_at)}</td>
                         <td><span className={`badge ${typeClass(row.type)}`}>{typeLabel(row.type)}</span></td>
-                        <td>{row.description || '-'}</td>
+                        <td className="khata-description-cell">
+                          <span className="khata-description" title={row.description || ''}>
+                            {row.description || '-'}
+                          </span>
+                        </td>
                         <td className="num">{row.type === 'debit' ? money(row.amount) : '-'}</td>
                         <td className="num">{row.type === 'credit' ? money(row.amount) : '-'}</td>
                         <td className="num">{row.type === 'payable' ? money(row.amount) : '-'}</td>
@@ -587,13 +612,6 @@ const Customers = () => {
                   )}
                 </tbody>
               </table>
-            </div>
-            <div className="khata-total-row">
-              <span>{balanceInfo(khata.customer.balance).label === 'Clear' ? 'Total Amount' : balanceInfo(khata.customer.balance).label}</span>
-              <span>=</span>
-              <span className={`money-chip ${balanceInfo(khata.customer.balance).chip}`}>
-                {money(balanceInfo(khata.customer.balance).amount)}
-              </span>
             </div>
           </div>
         )}

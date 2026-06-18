@@ -559,7 +559,7 @@ const customerSummarySelect = `
          COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.amount ELSE 0 END), 0) AS total_purchased,
          COALESCE(SUM(CASE WHEN l.type = 'credit' THEN l.amount ELSE 0 END), 0) AS total_paid,
          COALESCE(SUM(CASE WHEN l.type = 'payable' THEN l.amount ELSE 0 END), 0) AS total_payable,
-         COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.amount ELSE -l.amount END), 0) AS balance,
+         0 AS balance,
          MAX(l.created_at) AS last_transaction
   FROM customers c
   LEFT JOIN customer_ledger l ON l.customer_id = c.id
@@ -579,19 +579,20 @@ const listCustomers = (filters = {}) => {
   }
 
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
-  const havingSql = balance === 'pending'
-    ? 'HAVING balance > 0'
-    : balance === 'payable'
-      ? 'HAVING balance < 0'
-    : balance === 'clear'
-      ? 'HAVING balance = 0'
-      : ''
-  const baseSql = `${customerSummarySelect} ${whereSql} GROUP BY c.id ${havingSql}`
-
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM (${baseSql})`).get(params).c
-  const rows = db
-    .prepare(`${baseSql} ORDER BY balance DESC, c.id DESC LIMIT @limit OFFSET @offset`)
-    .all({ ...params, limit: pageSize, offset: (page - 1) * pageSize })
+  const baseSql = `${customerSummarySelect} ${whereSql} GROUP BY c.id`
+  const filteredRows = db
+    .prepare(`${baseSql} ORDER BY c.id DESC`)
+    .all(params)
+    .map(withComputedCustomerBalance)
+    .filter((customer) => {
+      if (balance === 'pending') return customer.balance > 0
+      if (balance === 'payable') return customer.balance < 0
+      if (balance === 'clear') return customer.balance === 0
+      return true
+    })
+    .sort((a, b) => (b.balance - a.balance) || (b.id - a.id))
+  const total = filteredRows.length
+  const rows = filteredRows.slice((page - 1) * pageSize, page * pageSize)
 
   return { rows, total, page, pageSize }
 }
@@ -601,15 +602,33 @@ const listCustomersBrief = () => {
 }
 
 const getCustomerSummary = (id) => {
-  return db.prepare(`${customerSummarySelect} WHERE c.id = ? GROUP BY c.id`).get(id)
+  return withComputedCustomerBalance(db.prepare(`${customerSummarySelect} WHERE c.id = ? GROUP BY c.id`).get(id))
 }
 
 const ledgerWithRunningBalance = (rows) => {
   let running = 0
   return rows.map((row) => {
-    running += row.type === 'debit' ? num(row.amount) : -num(row.amount)
+    if (row.type === 'debit') {
+      running += num(row.amount)
+    } else if (row.type === 'payable') {
+      running -= num(row.amount)
+    } else if (running > 0) {
+      running = Math.max(0, running - num(row.amount))
+    }
     return { ...row, running_balance: running }
   })
+}
+
+const withComputedCustomerBalance = (customer) => {
+  if (!customer) return null
+  const rows = db
+    .prepare('SELECT type, amount FROM customer_ledger WHERE customer_id = ? ORDER BY datetime(created_at), id')
+    .all(customer.id)
+  const balancedRows = ledgerWithRunningBalance(rows)
+  return {
+    ...customer,
+    balance: balancedRows.length ? balancedRows[balancedRows.length - 1].running_balance : 0
+  }
 }
 
 const getCustomerKhata = (id) => {
@@ -1139,12 +1158,12 @@ const renderKhataPdf = (customer, rows) => {
     .badge { display: inline-block; border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; }
     .badge.in { background: #e4f4ec; color: #1f8a57; }
     .badge.out { background: #fcebe8; color: #c0432f; }
-    .badge.payable { background: #eaf2ff; color: #2f6ec8; }
+    .badge.payable { background: #fbeada; color: #c9742a; }
     .empty { padding: 30px; text-align: center; color: #5c6b7e; }
     .total-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 18px; font-size: 14px; font-weight: 700; }
     .total-chip { display: inline-block; min-width: 130px; padding: 7px 14px; border-radius: 999px; text-align: center; font-family: "SF Mono", Consolas, monospace; }
     .total-chip.owes { color: #c0432f; background: #fcefed; }
-    .total-chip.payable { color: #2f6ec8; background: #eaf2ff; }
+    .total-chip.payable { color: #c9742a; background: #fbeada; }
     .total-chip.clear { color: #23875a; background: #e7f6ee; }
   </style>
 </head>

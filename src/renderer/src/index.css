@@ -414,7 +414,7 @@ td.right, th.right { text-align: right; }
 }
 .badge.in { background: #e4f4ec; color: #1f8a57; }
 .badge.out { background: #fcebe8; color: #c0432f; }
-.badge.payable { background: #eaf2ff; color: #2f6ec8; }
+.badge.payable { background: var(--amber-soft); color: #c9742a; }
 .badge.done { background: #e4f4ec; color: #1f8a57; }
 .badge.cancelled { background: #f0f1f3; color: #6b7787; }
 
@@ -1089,7 +1089,7 @@ tbody tr.row-selected:hover {
 }
 
 .drawer-wide.khata-drawer {
-  width: min(920px, calc(100vw - 48px));
+  width: min(1040px, calc(100vw - 48px));
 }
 
 .orders-table .col-date {
@@ -1520,8 +1520,8 @@ textarea:focus {
 }
 
 .money-chip.payable {
-  color: #2f6ec8;
-  background: #eaf2ff;
+  color: #c9742a;
+  background: var(--amber-soft);
 }
 
 .customers-table .sticky-col {
@@ -1566,26 +1566,92 @@ textarea:focus {
 .khata-detail {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
+}
+
+.khata-drawer .drawer-head {
+  gap: 14px;
+}
+
+.khata-drawer .drawer-head h2 {
+  flex: 1;
+  min-width: 0;
+}
+
+.khata-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px 18px;
+  width: 100%;
+}
+
+.khata-title-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.khata-title-balance {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.khata-title-balance .money-chip {
+  min-width: 128px;
+  padding: 6px 14px;
+  font-size: 15px;
 }
 
 .khata-summary {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
 }
 
 .khata-summary div,
 .khata-entry-card {
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: 14px;
+  padding: 14px;
   background: #fbfcfd;
+}
+
+.khata-summary-card.purchased {
+  color: #2f6ec8;
+  background: #eaf2ff;
+  border-color: #d8e7ff;
+}
+
+.khata-summary-card.paid {
+  color: #23875a;
+  background: #e7f6ee;
+  border-color: #d3ecdf;
+}
+
+.khata-summary-card.owes {
+  color: var(--red);
+  background: #fcefed;
+  border-color: #f0cfca;
+}
+
+.khata-summary-card.payable {
+  color: #c9742a;
+  background: var(--amber-soft);
+  border-color: #f4d3b5;
 }
 
 .khata-summary span {
   display: block;
-  color: var(--muted);
+  color: currentColor;
+  opacity: 0.72;
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1594,32 +1660,88 @@ textarea:focus {
 }
 
 .khata-summary strong {
-  font-size: 18px;
+  display: block;
+  font-size: 19px;
+  line-height: 1.2;
 }
 
 .khata-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 14px;
 }
 
 .khata-entry-card {
   display: grid;
-  gap: 8px;
+  align-content: start;
+  gap: 10px;
 }
 
 .khata-entry-card h3 {
-  margin: 0 0 4px;
-  font-size: 14px;
+  margin: 0 0 2px;
+  font-size: 15px;
+}
+
+.khata-entry-card input,
+.khata-entry-card select,
+.khata-entry-card button {
+  width: 100%;
+}
+
+.khata-detail > .table-wrap {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: auto;
+  background: #fff;
 }
 
 .khata-bulk-bar {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
 }
 
 .khata-table {
-  min-width: 980px;
+  min-width: 900px;
+}
+
+.khata-table th,
+.khata-table td {
+  padding: 12px 10px;
+}
+
+.khata-description-cell {
+  max-width: 260px;
+}
+
+.khata-description {
+  display: inline-block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.khata-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+@media (max-width: 760px) {
+  .drawer-wide.khata-drawer {
+    width: calc(100vw - 24px);
+  }
+
+  .khata-title-balance {
+    flex-basis: 100%;
+  }
+
+  .khata-actions,
+  .khata-summary {
+    grid-template-columns: 1fr;
+  }
 }
 
 .khata-table tbody tr.row-selected {
