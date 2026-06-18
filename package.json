@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Cross-platform Point of Sale desktop app (Electron + better-sqlite3 + React)",
   "main": "./out/main/index.js",
-  "author": "Your Name",
+  "author": "Muhammad Usman",
   "license": "MIT",
   "scripts": {
     "dev": "node scripts/prepare-branding.cjs && electron-vite dev --watch",
