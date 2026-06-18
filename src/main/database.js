@@ -124,7 +124,6 @@ const init = () => {
   migrateCustomerLedgerTypes()
   migrateProductsSchema()
   migrateAppUser()
-  seedIfEmpty()
   return dbPath
 }
 
@@ -1281,71 +1280,6 @@ const importProducts = async () => {
 
   const count = tx(rows)
   return { canceled: false, count }
-}
-
-/* ----------------------------------------------------------------- seed */
-
-const seedIfEmpty = () => {
-  const existing = db.prepare('SELECT COUNT(*) AS c FROM products').get().c
-  if (existing > 0) return
-
-  const sampleProducts = [
-    { name: 'Coca Cola 500ml', quantity: 120, cost: 80, status: 'in_stock' },
-    { name: 'Lay\'s Chips Salted', quantity: 60, cost: 50, status: 'in_stock' },
-    { name: 'Nestle Water 1.5L', quantity: 0, cost: 70, status: 'out_of_stock' },
-    { name: 'Dairy Milk Chocolate', quantity: 40, cost: 150, status: 'in_stock' },
-    { name: 'Sunsilk Shampoo 200ml', quantity: 25, cost: 320, status: 'in_stock' },
-    { name: 'Surf Excel 1kg', quantity: 18, cost: 540, status: 'in_stock' }
-  ]
-
-  const insertP = db.prepare(
-    `INSERT INTO products (name, image, quantity, cost, status, created_at)
-     VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
-  )
-  const created = []
-  db.transaction(() => {
-    for (const p of sampleProducts) {
-      const info = insertP.run({ ...p, image: null, created_at: nowISO() })
-      created.push({ id: info.lastInsertRowid, ...p })
-    }
-  })()
-
-  const insertO = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (@status, @created_at, 0)')
-  const insertI = db.prepare(
-    `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
-     VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
-  )
-  db.transaction(() => {
-    for (let d = 13; d >= 0; d--) {
-      const day = new Date()
-      day.setDate(day.getDate() - d)
-      const ordersToday = 1 + Math.floor(Math.random() * 4)
-      for (let k = 0; k < ordersToday; k++) {
-        const status = Math.random() < 0.1 ? 'CANCELLED' : 'DONE'
-        const info = insertO.run({ status, created_at: day.toISOString() })
-        const lineCount = 1 + Math.floor(Math.random() * 2)
-        const picked = new Set()
-        for (let n = 0; n < lineCount; n++) {
-          const p = created[Math.floor(Math.random() * created.length)]
-          if (picked.has(p.id)) continue
-          picked.add(p.id)
-          const qty = 1 + Math.floor(Math.random() * 5)
-          const markup = 5 + Math.floor(Math.random() * 25)
-          const totalPrice = (p.cost + markup) * qty
-          const profit = totalPrice - p.cost * qty
-          insertI.run({
-            order_id: info.lastInsertRowid,
-            product_id: p.id,
-            product_name: p.name,
-            quantity: qty,
-            total_price: totalPrice,
-            unit_cost: p.cost,
-            profit
-          })
-        }
-      }
-    }
-  })()
 }
 
 const backupTo = (destPath) => {
