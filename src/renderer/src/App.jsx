@@ -2,15 +2,17 @@ import React, { useEffect, useState } from 'react'
 import Dashboard from './pages/Dashboard'
 import Products from './pages/Products'
 import Orders from './pages/Orders'
+import Customers from './pages/Customers'
 import Auth from './pages/Auth'
 import { ToastProvider } from './components/Toast'
-import { IconDashboard, IconBox, IconCart, IconLogout } from './components/icons'
+import { IconDashboard, IconBox, IconCart, IconLogout, IconUsers } from './components/icons'
 import BackupButton from './components/BackupButton'
 
 const NAV = [
   { key: 'dashboard', label: 'Dashboard', Icon: IconDashboard, Page: Dashboard },
   { key: 'products', label: 'Inventory', Icon: IconBox, Page: Products },
-  { key: 'orders', label: 'Orders', Icon: IconCart, Page: Orders }
+  { key: 'orders', label: 'Orders', Icon: IconCart, Page: Orders },
+  { key: 'customers', label: 'Customers Khata', Icon: IconUsers, Page: Customers }
 ]
 
 const App = () => {

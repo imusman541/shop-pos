@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-const Drawer = ({ open, title, onClose, children, footer, wide }) => {
+const Drawer = ({ open, title, onClose, children, footer, wide, className = '' }) => {
   const [mounted, setMounted] = useState(false)
   const [active, setActive] = useState(false)
 
@@ -31,7 +31,11 @@ const Drawer = ({ open, title, onClose, children, footer, wide }) => {
       className={`drawer-backdrop${active ? ' active' : ''}`}
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
-      <aside className={`drawer${wide ? ' drawer-wide' : ''}${active ? ' active' : ''}`} role="dialog" aria-modal="true">
+      <aside
+        className={`drawer${wide ? ' drawer-wide' : ''}${className ? ` ${className}` : ''}${active ? ' active' : ''}`}
+        role="dialog"
+        aria-modal="true"
+      >
         <div className="drawer-head">
           <h2>{title}</h2>
           <button className="x" onClick={onClose} aria-label="Close">×</button>

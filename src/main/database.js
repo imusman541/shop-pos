@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
 import XLSX from 'xlsx'
-import { app, dialog } from 'electron'
+import { app, BrowserWindow, dialog } from 'electron'
 
 let db
 
@@ -13,6 +13,34 @@ const nowISO = () => {
 const num = (v, fallback = 0) => {
   const n = Number(v)
   return Number.isFinite(n) ? n : fallback
+}
+
+const escapeHtml = (value = '') => String(value ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;')
+
+const formatPdfDate = (value) => {
+  if (!value) return '-'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '-'
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+const formatPdfMoney = (value) => {
+  const amount = num(value)
+  return `Rs ${amount.toLocaleString('en-PK', {
+    minimumFractionDigits: amount % 1 === 0 ? 0 : 2,
+    maximumFractionDigits: 2
+  })}`
+}
+
+const ledgerTypeLabel = (type) => {
+  if (type === 'debit') return 'Not Paid'
+  if (type === 'payable') return 'To Pay'
+  return 'Paid'
 }
 
 /* ---------------------------------------------------------------- setup */
@@ -61,14 +89,39 @@ const init = () => {
       quantity      INTEGER NOT NULL DEFAULT 1,
       price         REAL    NOT NULL DEFAULT 0,
       margin        REAL    NOT NULL DEFAULT 0,
+      customer_id   INTEGER,
+      paid_amount   REAL    NOT NULL DEFAULT 0,
       status        TEXT    NOT NULL DEFAULT 'DONE',
       created_at    TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS customers (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      phone       TEXT,
+      address     TEXT,
+      notes       TEXT,
+      created_at  TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS customer_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id  INTEGER NOT NULL,
+      order_id     INTEGER,
+      type         TEXT    NOT NULL CHECK (type IN ('debit', 'credit', 'payable')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      created_at   TEXT    NOT NULL,
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
   `)
 
   migrateOrdersSchema()
   migrateOrderArchive()
+  migrateOrderCustomerFields()
   migrateOrderItemsSchema()
+  migrateCustomerLedgerTypes()
   migrateProductsSchema()
   migrateAppUser()
   seedIfEmpty()
@@ -280,6 +333,16 @@ const migrateOrderArchive = () => {
   }
 }
 
+const migrateOrderCustomerFields = () => {
+  const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
+  if (!cols.includes('customer_id')) {
+    db.exec('ALTER TABLE orders ADD COLUMN customer_id INTEGER')
+  }
+  if (!cols.includes('paid_amount')) {
+    db.exec('ALTER TABLE orders ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0')
+  }
+}
+
 const migrateOrderItemsSchema = () => {
   const cols = db.prepare('PRAGMA table_info(order_items)').all().map((c) => c.name)
   if (!cols.length) return
@@ -310,6 +373,30 @@ const migrateOrderItemsSchema = () => {
     FROM order_items;
     DROP TABLE order_items;
     ALTER TABLE order_items_new RENAME TO order_items;
+  `)
+}
+
+const migrateCustomerLedgerTypes = () => {
+  const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_ledger'").get()
+  if (!table?.sql || table.sql.includes("'payable'")) return
+
+  db.exec(`
+    CREATE TABLE customer_ledger_new (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      customer_id  INTEGER NOT NULL,
+      order_id     INTEGER,
+      type         TEXT    NOT NULL CHECK (type IN ('debit', 'credit', 'payable')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      created_at   TEXT    NOT NULL,
+      FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
+    );
+    INSERT INTO customer_ledger_new (id, customer_id, order_id, type, amount, description, method, created_at)
+    SELECT id, customer_id, order_id, type, amount, description, method, created_at
+    FROM customer_ledger;
+    DROP TABLE customer_ledger;
+    ALTER TABLE customer_ledger_new RENAME TO customer_ledger;
   `)
 }
 
@@ -439,7 +526,14 @@ const attachItems = (order) => {
 }
 
 const getOrderById = (id) => {
-  const order = db.prepare('SELECT id, status, created_at FROM orders WHERE id = ?').get(id)
+  const order = db
+    .prepare(
+      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, c.name AS customer_name
+       FROM orders o
+       LEFT JOIN customers c ON c.id = o.customer_id
+       WHERE o.id = ?`
+    )
+    .get(id)
   if (!order) return null
   return attachItems(order)
 }
@@ -456,6 +550,231 @@ const normalizeOrderItems = (data) => {
     }]
   }
   return []
+}
+
+/* ------------------------------------------------------------- customers */
+
+const customerSummarySelect = `
+  SELECT c.id, c.name, c.phone, c.address, c.notes, c.created_at,
+         COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.amount ELSE 0 END), 0) AS total_purchased,
+         COALESCE(SUM(CASE WHEN l.type = 'credit' THEN l.amount ELSE 0 END), 0) AS total_paid,
+         COALESCE(SUM(CASE WHEN l.type = 'payable' THEN l.amount ELSE 0 END), 0) AS total_payable,
+         COALESCE(SUM(CASE WHEN l.type = 'debit' THEN l.amount ELSE -l.amount END), 0) AS balance,
+         MAX(l.created_at) AS last_transaction
+  FROM customers c
+  LEFT JOIN customer_ledger l ON l.customer_id = c.id
+`
+
+const listCustomers = (filters = {}) => {
+  const search = String(filters.search || '').trim()
+  const balance = filters.balance || ''
+  const page = Math.max(1, num(filters.page, 1))
+  const pageSize = Math.max(1, num(filters.pageSize, 25))
+  const where = []
+  const params = {}
+
+  if (search) {
+    where.push('(c.name LIKE @search OR c.phone LIKE @search)')
+    params.search = `%${search}%`
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const havingSql = balance === 'pending'
+    ? 'HAVING balance > 0'
+    : balance === 'payable'
+      ? 'HAVING balance < 0'
+    : balance === 'clear'
+      ? 'HAVING balance = 0'
+      : ''
+  const baseSql = `${customerSummarySelect} ${whereSql} GROUP BY c.id ${havingSql}`
+
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM (${baseSql})`).get(params).c
+  const rows = db
+    .prepare(`${baseSql} ORDER BY balance DESC, c.id DESC LIMIT @limit OFFSET @offset`)
+    .all({ ...params, limit: pageSize, offset: (page - 1) * pageSize })
+
+  return { rows, total, page, pageSize }
+}
+
+const listCustomersBrief = () => {
+  return db.prepare('SELECT id, name, phone FROM customers ORDER BY name').all()
+}
+
+const getCustomerSummary = (id) => {
+  return db.prepare(`${customerSummarySelect} WHERE c.id = ? GROUP BY c.id`).get(id)
+}
+
+const ledgerWithRunningBalance = (rows) => {
+  let running = 0
+  return rows.map((row) => {
+    running += row.type === 'debit' ? num(row.amount) : -num(row.amount)
+    return { ...row, running_balance: running }
+  })
+}
+
+const getCustomerKhata = (id) => {
+  const customer = getCustomerSummary(id)
+  if (!customer) return null
+  const rows = db
+    .prepare('SELECT * FROM customer_ledger WHERE customer_id = ? ORDER BY datetime(created_at), id')
+    .all(id)
+  return { customer, rows: ledgerWithRunningBalance(rows) }
+}
+
+const addLedgerEntry = ({ customer_id, order_id = null, type, amount, description = '', method = '', created_at = nowISO() }) => {
+  const value = num(amount)
+  if (!customer_id) throw new Error('Select a customer')
+  if (!['debit', 'credit', 'payable'].includes(type)) throw new Error('Invalid ledger entry type')
+  if (value <= 0) throw new Error('Amount must be greater than 0')
+
+  const info = db.prepare(
+    `INSERT INTO customer_ledger (customer_id, order_id, type, amount, description, method, created_at)
+     VALUES (@customer_id, @order_id, @type, @amount, @description, @method, @created_at)`
+  ).run({
+    customer_id,
+    order_id,
+    type,
+    amount: value,
+    description,
+    method,
+    created_at
+  })
+  return db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(info.lastInsertRowid)
+}
+
+const createCustomer = (data) => {
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Customer name is required')
+
+  const info = db.prepare(
+    `INSERT INTO customers (name, phone, address, notes, created_at)
+     VALUES (@name, @phone, @address, @notes, @created_at)`
+  ).run({
+    name,
+    phone: String(data.phone || '').trim(),
+    address: String(data.address || '').trim(),
+    notes: String(data.notes || '').trim(),
+    created_at: nowISO()
+  })
+
+  const id = info.lastInsertRowid
+  const opening = num(data.opening_balance)
+  if (opening > 0) {
+    addLedgerEntry({
+      customer_id: id,
+      type: 'debit',
+      amount: opening,
+      description: 'Opening balance'
+    })
+  }
+  return getCustomerSummary(id)
+}
+
+const updateCustomer = ({ id, data }) => {
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Customer name is required')
+
+  db.prepare(
+    `UPDATE customers
+     SET name = @name, phone = @phone, address = @address, notes = @notes
+     WHERE id = @id`
+  ).run({
+    id,
+    name,
+    phone: String(data.phone || '').trim(),
+    address: String(data.address || '').trim(),
+    notes: String(data.notes || '').trim()
+  })
+  return getCustomerSummary(id)
+}
+
+const deleteCustomer = (id) => {
+  db.prepare('UPDATE orders SET customer_id = NULL, paid_amount = 0 WHERE customer_id = ?').run(id)
+  db.prepare('DELETE FROM customer_ledger WHERE customer_id = ?').run(id)
+  const result = db.prepare('DELETE FROM customers WHERE id = ?').run(id)
+  return { ok: true, count: result.changes }
+}
+
+const deleteCustomers = (ids = []) => {
+  const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
+  if (!list.length) return { ok: true, count: 0 }
+  const placeholders = list.map(() => '?').join(', ')
+  db.prepare(`UPDATE orders SET customer_id = NULL, paid_amount = 0 WHERE customer_id IN (${placeholders})`).run(...list)
+  db.prepare(`DELETE FROM customer_ledger WHERE customer_id IN (${placeholders})`).run(...list)
+  const result = db.prepare(`DELETE FROM customers WHERE id IN (${placeholders})`).run(...list)
+  return { ok: true, count: result.changes }
+}
+
+const deleteCustomerLedgerEntries = ({ id, entryIds = [] }) => {
+  const customerId = Number(id)
+  const list = [...new Set(entryIds.map((entryId) => Number(entryId)).filter((entryId) => entryId > 0))]
+  if (!customerId || !list.length) return { ok: true, count: 0 }
+  const placeholders = list.map(() => '?').join(', ')
+  const result = db
+    .prepare(`DELETE FROM customer_ledger WHERE customer_id = ? AND id IN (${placeholders})`)
+    .run(customerId, ...list)
+  return { ok: true, count: result.changes }
+}
+
+const receiveCustomerPayment = ({ id, data }) => {
+  return addLedgerEntry({
+    customer_id: id,
+    type: 'credit',
+    amount: data.amount,
+    description: data.description || 'Payment received',
+    method: data.method || 'Cash',
+    created_at: data.created_at || nowISO()
+  })
+}
+
+const addCustomerCharge = ({ id, data }) => {
+  return addLedgerEntry({
+    customer_id: id,
+    type: 'debit',
+    amount: data.amount,
+    description: data.description || 'Manual khata entry',
+    method: data.method || '',
+    created_at: data.created_at || nowISO()
+  })
+}
+
+const addCustomerPayable = ({ id, data }) => {
+  return addLedgerEntry({
+    customer_id: id,
+    type: 'payable',
+    amount: data.amount,
+    description: data.description || 'Amount payable to customer',
+    method: data.method || '',
+    created_at: data.created_at || nowISO()
+  })
+}
+
+const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items }) => {
+  db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(orderId)
+  if (status !== 'DONE' || !customerId) return
+
+  const total = items.reduce((sum, item) => sum + num(item.total_price), 0)
+  if (total <= 0) return
+
+  addLedgerEntry({
+    customer_id: customerId,
+    order_id: orderId,
+    type: 'debit',
+    amount: total,
+    description: `Order #${orderId}`
+  })
+
+  const paid = Math.min(Math.max(num(paidAmount), 0), total)
+  if (paid > 0) {
+    addLedgerEntry({
+      customer_id: customerId,
+      order_id: orderId,
+      type: 'credit',
+      amount: paid,
+      description: `Payment for order #${orderId}`,
+      method: 'Cash'
+    })
+  }
 }
 
 const getOrders = (filters = {}) => {
@@ -494,8 +813,9 @@ const getOrders = (filters = {}) => {
   const total = db.prepare(`SELECT COUNT(*) AS c FROM orders o ${whereSql}`).get(params).c
   const orders = db
     .prepare(
-      `SELECT o.id, o.status, o.created_at
+      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, c.name AS customer_name
        FROM orders o
+       LEFT JOIN customers c ON c.id = o.customer_id
        ${whereSql}
        ORDER BY o.id DESC
        LIMIT @limit OFFSET @offset`
@@ -512,21 +832,27 @@ const createOrder = (data) => {
 
   const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
   const created_at = data.created_at || nowISO()
+  const customer_id = data.customer_id ? num(data.customer_id) : null
+  const paid_amount = num(data.paid_amount)
 
-  const insertOrder = db.prepare('INSERT INTO orders (status, created_at, isArchive) VALUES (?, ?, 0)')
+  const insertOrder = db.prepare(
+    `INSERT INTO orders (status, created_at, isArchive, customer_id, paid_amount)
+     VALUES (@status, @created_at, 0, @customer_id, @paid_amount)`
+  )
   const insertItem = db.prepare(
     `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
      VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
   )
 
   const orderId = db.transaction(() => {
-    const info = insertOrder.run(status, created_at)
+    const info = insertOrder.run({ status, created_at, customer_id, paid_amount })
     const id = info.lastInsertRowid
     const resolved = items.map((raw) => resolveItemPricing(raw))
     for (const item of resolved) {
       insertItem.run({ order_id: id, ...item })
     }
     if (status === 'DONE') deductInventory(resolved)
+    replaceOrderLedger({ orderId: id, customerId: customer_id, status, paidAmount: paid_amount, items: resolved })
     return id
   })()
 
@@ -538,6 +864,8 @@ const updateOrder = ({ id, data }) => {
   if (!items.length) throw new Error('Order must include at least one product')
 
   const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
+  const customer_id = data.customer_id ? num(data.customer_id) : null
+  const paid_amount = num(data.paid_amount)
   const insertItem = db.prepare(
     `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
      VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
@@ -549,7 +877,8 @@ const updateOrder = ({ id, data }) => {
   db.transaction(() => {
     if (existingOrder?.status === 'DONE') restoreInventory(existingItems)
 
-    db.prepare('UPDATE orders SET status = ? WHERE id = ?').run(status, id)
+    db.prepare('UPDATE orders SET status = @status, customer_id = @customer_id, paid_amount = @paid_amount WHERE id = @id')
+      .run({ id, status, customer_id, paid_amount })
     db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
 
     const resolved = items.map((raw) => {
@@ -561,6 +890,7 @@ const updateOrder = ({ id, data }) => {
       insertItem.run({ order_id: id, ...item })
     }
     if (status === 'DONE') deductInventory(resolved)
+    replaceOrderLedger({ orderId: id, customerId: customer_id, status, paidAmount: paid_amount, items: resolved })
   })()
 
   return getOrderById(id)
@@ -572,6 +902,7 @@ const deleteOrder = (id) => {
 
   db.transaction(() => {
     if (order?.status === 'DONE') restoreInventory(items)
+    db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(id)
     db.prepare('UPDATE orders SET isArchive = 1 WHERE id = ? AND isArchive = 0').run(id)
   })()
 
@@ -590,6 +921,7 @@ const deleteOrders = (ids = []) => {
       if (!order) continue
       const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
       if (order.status === 'DONE') restoreInventory(items)
+      db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(id)
       const result = db.prepare('UPDATE orders SET isArchive = 1 WHERE isArchive = 0 AND id = ?').run(id)
       count += result.changes
     }
@@ -770,6 +1102,108 @@ const exportOrders = async () => {
   return writeSheet(rows, 'Orders', 'orders.xlsx')
 }
 
+const renderKhataPdf = (customer, rows) => {
+  const totalAmount = rows.length ? rows[rows.length - 1].running_balance : customer.balance
+  const totalLabel = totalAmount > 0 ? 'Total Customer Owes' : totalAmount < 0 ? 'Total To Pay Customer' : 'Total Amount'
+  const totalClass = totalAmount > 0 ? 'owes' : totalAmount < 0 ? 'payable' : 'clear'
+  const tableRows = rows.length
+    ? rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(formatPdfDate(row.created_at))}</td>
+        <td><span class="badge ${row.type === 'debit' ? 'out' : row.type === 'payable' ? 'payable' : 'in'}">${escapeHtml(ledgerTypeLabel(row.type))}</span></td>
+        <td>${escapeHtml(row.description || '-')}</td>
+        <td class="num">${row.type === 'debit' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
+        <td class="num">${row.type === 'credit' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
+        <td class="num">${row.type === 'payable' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
+        <td class="num strong">${escapeHtml(formatPdfMoney(row.running_balance))}</td>
+      </tr>
+    `).join('')
+    : '<tr><td colspan="7" class="empty">No khata entries selected.</td></tr>'
+
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(customer.name)} . khata</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 32px; color: #1a2230; font-family: Arial, Helvetica, sans-serif; }
+    h1 { margin: 0 0 6px; font-size: 24px; letter-spacing: -0.2px; }
+    .meta { margin-bottom: 22px; color: #5c6b7e; font-size: 12px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 10px 12px; color: #8a97a8; text-transform: uppercase; letter-spacing: 0.5px; background: #fbfcfd; border-top: 1px solid #e4e7ec; border-bottom: 1px solid #e4e7ec; }
+    td { padding: 11px 12px; border-bottom: 1px solid #e4e7ec; vertical-align: middle; }
+    th:not(:nth-child(3)), td:not(:nth-child(3)) { text-align: center; }
+    .num { font-family: "SF Mono", Consolas, monospace; white-space: nowrap; }
+    .strong { font-weight: 700; }
+    .badge { display: inline-block; border-radius: 999px; padding: 3px 9px; font-size: 11px; font-weight: 700; }
+    .badge.in { background: #e4f4ec; color: #1f8a57; }
+    .badge.out { background: #fcebe8; color: #c0432f; }
+    .badge.payable { background: #eaf2ff; color: #2f6ec8; }
+    .empty { padding: 30px; text-align: center; color: #5c6b7e; }
+    .total-row { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 18px; font-size: 14px; font-weight: 700; }
+    .total-chip { display: inline-block; min-width: 130px; padding: 7px 14px; border-radius: 999px; text-align: center; font-family: "SF Mono", Consolas, monospace; }
+    .total-chip.owes { color: #c0432f; background: #fcefed; }
+    .total-chip.payable { color: #2f6ec8; background: #eaf2ff; }
+    .total-chip.clear { color: #23875a; background: #e7f6ee; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(customer.name)} . khata</h1>
+  <div class="meta">Downloaded ${escapeHtml(formatPdfDate(new Date().toISOString()))}</div>
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Type</th>
+        <th>Description</th>
+        <th>Not Paid</th>
+        <th>Paid</th>
+        <th>To Pay</th>
+        <th>Balance</th>
+      </tr>
+    </thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+  <div class="total-row">
+    <span>${escapeHtml(totalLabel)}</span>
+    <span>=</span>
+    <span class="total-chip ${totalClass}">${escapeHtml(formatPdfMoney(Math.abs(totalAmount)))}</span>
+  </div>
+</body>
+</html>`
+}
+
+const exportCustomerKhata = async (id, entryIds = []) => {
+  const khata = getCustomerKhata(id)
+  if (!khata) throw new Error('Customer not found')
+  const selectedIds = new Set(entryIds.map((entryId) => Number(entryId)).filter((entryId) => entryId > 0))
+  const rows = selectedIds.size
+    ? khata.rows.filter((row) => selectedIds.has(Number(row.id)))
+    : khata.rows
+
+  const safeName = khata.customer.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'customer'
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: `khata-${safeName}.pdf`,
+    filters: [{ name: 'PDF Document', extensions: ['pdf'] }]
+  })
+  if (canceled || !filePath) return { canceled: true }
+
+  const win = new BrowserWindow({ show: false })
+  try {
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderKhataPdf(khata.customer, rows))}`)
+    const pdf = await win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'default' }
+    })
+    fs.writeFileSync(filePath, pdf)
+    return { canceled: false, filePath, count: rows.length }
+  } finally {
+    win.destroy()
+  }
+}
+
 const writeSheet = async (rows, sheetName, defaultName) => {
   const { canceled, filePath } = await dialog.showSaveDialog({
     defaultPath: defaultName,
@@ -913,6 +1347,17 @@ export {
   updateProduct,
   deleteProduct,
   deleteProducts,
+  listCustomers,
+  listCustomersBrief,
+  getCustomerKhata,
+  createCustomer,
+  updateCustomer,
+  deleteCustomer,
+  deleteCustomers,
+  deleteCustomerLedgerEntries,
+  receiveCustomerPayment,
+  addCustomerCharge,
+  addCustomerPayable,
   getOrders,
   createOrder,
   updateOrder,
@@ -921,5 +1366,6 @@ export {
   getDashboard,
   exportProducts,
   exportOrders,
+  exportCustomerKhata,
   importProducts
 }

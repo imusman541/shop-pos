@@ -20,6 +20,20 @@ const api = {
   exportProducts: () => ipcRenderer.invoke('products:export'),
   importProducts: () => ipcRenderer.invoke('products:import'),
 
+  // Customers / Khata
+  getCustomers: (filters) => ipcRenderer.invoke('customers:get', filters),
+  listCustomersBrief: () => ipcRenderer.invoke('customers:listBrief'),
+  getCustomerKhata: (id) => ipcRenderer.invoke('customers:getKhata', id),
+  createCustomer: (data) => ipcRenderer.invoke('customers:create', data),
+  updateCustomer: (id, data) => ipcRenderer.invoke('customers:update', { id, data }),
+  deleteCustomer: (id) => ipcRenderer.invoke('customers:delete', id),
+  deleteCustomers: (ids) => ipcRenderer.invoke('customers:deleteMany', ids),
+  deleteCustomerKhataEntries: (id, entryIds) => ipcRenderer.invoke('customers:deleteKhataEntries', { id, entryIds }),
+  receiveCustomerPayment: (id, data) => ipcRenderer.invoke('customers:payment', { id, data }),
+  addCustomerCharge: (id, data) => ipcRenderer.invoke('customers:charge', { id, data }),
+  addCustomerPayable: (id, data) => ipcRenderer.invoke('customers:payable', { id, data }),
+  exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
+
   // Orders
   getOrders: (filters) => ipcRenderer.invoke('orders:get', filters),
   createOrder: (data) => ipcRenderer.invoke('orders:create', data),

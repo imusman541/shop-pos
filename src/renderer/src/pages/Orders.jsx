@@ -8,7 +8,7 @@ import { money, int, fmtDate, daysAgo } from '../lib/format'
 import { IconPlus, IconExport, IconEdit, IconTrash, IconInfo } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { status: 'DONE', items: [] }
+const EMPTY = { status: 'DONE', customer_id: '', paid_amount: '', items: [] }
 
 const orderQty = (items) => {
   return items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
@@ -64,6 +64,7 @@ const Orders = () => {
   const [loading, setLoading] = useState(true)
 
   const [products, setProducts] = useState([])
+  const [customers, setCustomers] = useState([])
   const [modalOpen, setModalOpen] = useState(false)
   const [viewingOrder, setViewingOrder] = useState(null)
   const [editing, setEditing] = useState(null)
@@ -83,6 +84,7 @@ const Orders = () => {
 
   useEffect(() => {
     window.api.listProductsBrief().then(setProducts)
+    window.api.listCustomersBrief().then(setCustomers)
   }, [modalOpen])
 
   const updateFilter = (patch) => { setPage(1); setFilters((f) => ({ ...f, ...patch })) }
@@ -158,6 +160,8 @@ const Orders = () => {
     setEditing(o)
     setForm({
       status: o.status,
+      customer_id: o.customer_id || '',
+      paid_amount: o.paid_amount || '',
       items: o.items.map((i) => ({
         product_id: i.product_id,
         product_name: i.product_name,
@@ -316,6 +320,7 @@ const Orders = () => {
                 </th>
                 <th>Order #</th>
                 <th>Products</th>
+                <th>Customer</th>
                 <th>Qty</th>
                 <th>Status</th>
                 <th className="sticky-col sticky-col-total">Total</th>
@@ -326,9 +331,9 @@ const Orders = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={9}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={10}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={9}>
+                <tr><td colSpan={10}>
                   <div className="empty-state">
                     <strong>No orders found</strong>
                     Create an order or adjust the filters.
@@ -360,6 +365,7 @@ const Orders = () => {
                         </button>
                       )}
                     </td>
+                    <td>{o.customer_name || <span className="muted-dash">—</span>}</td>
                     <td className="num">{int(orderQty(o.items))}</td>
                     <td><span className={`badge ${o.status === 'DONE' ? 'done' : 'cancelled'}`}>{o.status}</span></td>
                     <td className="num sticky-col sticky-col-total"><strong>{money(orderTotal(o.items))}</strong></td>
@@ -382,6 +388,7 @@ const Orders = () => {
 
       <Drawer
         wide
+        className="order-items-drawer"
         open={!!viewingOrder}
         title={viewingOrder ? `Order #${viewingOrder.id} · Products` : ''}
         onClose={() => setViewingOrder(null)}
@@ -494,6 +501,34 @@ const Orders = () => {
               ))}
             </div>
           )}
+
+          <div className="form-grid-two">
+            <div>
+              <label>Customer <span className="label-note">(optional)</span></label>
+              <select
+                value={form.customer_id}
+                onChange={(e) => setForm((f) => ({ ...f, customer_id: e.target.value }))}
+              >
+                <option value="">Walk-in customer</option>
+                {customers.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    #{c.id} {c.name}{c.phone ? ` · ${c.phone}` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label>Paid Amount</label>
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={form.paid_amount}
+                onChange={(e) => setForm((f) => ({ ...f, paid_amount: e.target.value }))}
+                placeholder="e.g. 500"
+              />
+            </div>
+          </div>
 
           <div>
             <label>Status</label>

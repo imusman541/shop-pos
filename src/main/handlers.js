@@ -20,6 +20,20 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('products:export', () => db.exportProducts())
   ipcMain.handle('products:import', () => db.importProducts())
 
+  // Customers / Khata
+  ipcMain.handle('customers:get', (_e, filters) => db.listCustomers(filters))
+  ipcMain.handle('customers:listBrief', () => db.listCustomersBrief())
+  ipcMain.handle('customers:getKhata', (_e, id) => db.getCustomerKhata(id))
+  ipcMain.handle('customers:create', (_e, data) => db.createCustomer(data))
+  ipcMain.handle('customers:update', (_e, payload) => db.updateCustomer(payload))
+  ipcMain.handle('customers:delete', (_e, id) => db.deleteCustomer(id))
+  ipcMain.handle('customers:deleteMany', (_e, ids) => db.deleteCustomers(ids))
+  ipcMain.handle('customers:deleteKhataEntries', (_e, payload) => db.deleteCustomerLedgerEntries(payload))
+  ipcMain.handle('customers:payment', (_e, payload) => db.receiveCustomerPayment(payload))
+  ipcMain.handle('customers:charge', (_e, payload) => db.addCustomerCharge(payload))
+  ipcMain.handle('customers:payable', (_e, payload) => db.addCustomerPayable(payload))
+  ipcMain.handle('customers:exportKhata', (_e, payload) => db.exportCustomerKhata(payload.id, payload.entryIds))
+
   // Orders
   ipcMain.handle('orders:get', (_e, filters) => db.getOrders(filters))
   ipcMain.handle('orders:create', (_e, data) => db.createOrder(data))
