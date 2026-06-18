@@ -33,6 +33,7 @@ const api = {
   addCustomerCharge: (id, data) => ipcRenderer.invoke('customers:charge', { id, data }),
   addCustomerPayable: (id, data) => ipcRenderer.invoke('customers:payable', { id, data }),
   exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
+  shareCustomerKhataOnWhatsApp: (id, entryIds = []) => ipcRenderer.invoke('customers:shareKhataWhatsApp', { id, entryIds }),
 
   // Orders
   getOrders: (filters) => ipcRenderer.invoke('orders:get', filters),

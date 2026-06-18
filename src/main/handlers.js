@@ -33,6 +33,7 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('customers:charge', (_e, payload) => db.addCustomerCharge(payload))
   ipcMain.handle('customers:payable', (_e, payload) => db.addCustomerPayable(payload))
   ipcMain.handle('customers:exportKhata', (_e, payload) => db.exportCustomerKhata(payload.id, payload.entryIds))
+  ipcMain.handle('customers:shareKhataWhatsApp', (_e, payload) => db.shareCustomerKhataOnWhatsApp(payload.id, payload.entryIds))
 
   // Orders
   ipcMain.handle('orders:get', (_e, filters) => db.getOrders(filters))

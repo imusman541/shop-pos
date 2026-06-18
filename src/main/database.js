@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
 import XLSX from 'xlsx'
-import { app, BrowserWindow, dialog } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'
 
 let db
 
@@ -1192,34 +1192,85 @@ const renderKhataPdf = (customer, rows) => {
 </html>`
 }
 
-const exportCustomerKhata = async (id, entryIds = []) => {
+const safeCustomerFileName = (customer) => {
+  return customer.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'customer'
+}
+
+const normalizeWhatsAppPhone = (phone = '') => {
+  let digits = String(phone).replace(/\D/g, '')
+  if (!digits) return ''
+  if (digits.startsWith('00')) digits = digits.slice(2)
+  if (digits.startsWith('0')) digits = `92${digits.slice(1)}`
+  if (digits.length === 10 && digits.startsWith('3')) digits = `92${digits}`
+  return digits
+}
+
+const getKhataPdfRows = (id, entryIds = []) => {
   const khata = getCustomerKhata(id)
   if (!khata) throw new Error('Customer not found')
   const selectedIds = new Set(entryIds.map((entryId) => Number(entryId)).filter((entryId) => entryId > 0))
   const rows = selectedIds.size
     ? khata.rows.filter((row) => selectedIds.has(Number(row.id)))
     : khata.rows
+  return { khata, rows }
+}
 
-  const safeName = khata.customer.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'customer'
-  const { canceled, filePath } = await dialog.showSaveDialog({
-    defaultPath: `khata-${safeName}.pdf`,
-    filters: [{ name: 'PDF Document', extensions: ['pdf'] }]
-  })
-  if (canceled || !filePath) return { canceled: true }
-
+const writeKhataPdfFile = async (customer, rows, filePath) => {
   const win = new BrowserWindow({ show: false })
   try {
-    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderKhataPdf(khata.customer, rows))}`)
+    await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(renderKhataPdf(customer, rows))}`)
     const pdf = await win.webContents.printToPDF({
       printBackground: true,
       pageSize: 'A4',
       margins: { marginType: 'default' }
     })
     fs.writeFileSync(filePath, pdf)
-    return { canceled: false, filePath, count: rows.length }
   } finally {
     win.destroy()
   }
+}
+
+const exportCustomerKhata = async (id, entryIds = []) => {
+  const { khata, rows } = getKhataPdfRows(id, entryIds)
+  const safeName = safeCustomerFileName(khata.customer)
+  const { canceled, filePath } = await dialog.showSaveDialog({
+    defaultPath: `khata-${safeName}.pdf`,
+    filters: [{ name: 'PDF Document', extensions: ['pdf'] }]
+  })
+  if (canceled || !filePath) return { canceled: true }
+
+  await writeKhataPdfFile(khata.customer, rows, filePath)
+  return { canceled: false, filePath, count: rows.length }
+}
+
+const shareCustomerKhataOnWhatsApp = async (id, entryIds = []) => {
+  const { khata, rows } = getKhataPdfRows(id, entryIds)
+  const safeName = safeCustomerFileName(khata.customer)
+  const folder = app.getPath('downloads')
+  fs.mkdirSync(folder, { recursive: true })
+  const filePath = path.join(folder, `khata-${safeName}-${Date.now()}.pdf`)
+
+  await writeKhataPdfFile(khata.customer, rows, filePath)
+
+  clipboard.writeText(filePath)
+
+  const phone = normalizeWhatsAppPhone(khata.customer.phone)
+  const message = `Khata PDF for ${khata.customer.name} is ready. Please attach the revealed PDF file.`
+  const query = phone
+    ? `phone=${phone}&text=${encodeURIComponent(message)}`
+    : `text=${encodeURIComponent(message)}`
+  const whatsappUrl = `whatsapp://send?${query}`
+  const webUrl = phone
+    ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    : `https://wa.me/?text=${encodeURIComponent(message)}`
+  try {
+    await shell.openExternal(whatsappUrl)
+  } catch {
+    await shell.openExternal(webUrl)
+  }
+  shell.showItemInFolder(filePath)
+
+  return { canceled: false, filePath, count: rows.length, openedDirectChat: !!phone }
 }
 
 const writeSheet = async (rows, sheetName, defaultName) => {
@@ -1320,5 +1371,6 @@ export {
   exportProducts,
   exportOrders,
   exportCustomerKhata,
+  shareCustomerKhataOnWhatsApp,
   importProducts
 }

@@ -215,6 +215,14 @@ const Customers = () => {
     }
   }
 
+  const sendKhataToWhatsApp = async (customer, entryIds = []) => {
+    const res = await window.api.shareCustomerKhataOnWhatsApp(customer.id, entryIds)
+    if (!res.canceled) {
+      const scope = entryIds.length ? `${entryIds.length} selected entr${entryIds.length === 1 ? 'y' : 'ies'}` : 'khata'
+      toast(`${res.openedDirectChat ? 'Customer WhatsApp chat opened' : 'WhatsApp opened'}. ${scope} PDF is revealed and its path is copied.`)
+    }
+  }
+
   const deleteKhataEntries = async (entryIds) => {
     if (!viewing || !entryIds.length) return
     const label = entryIds.length === 1 ? 'this khata entry' : `${entryIds.length} khata entries`
@@ -429,13 +437,22 @@ const Customers = () => {
         footer={
           <>
             {khata && (
-              <button
-                className="btn"
-                onClick={() => downloadKhata(khata.customer)}
-                disabled={khata.rows.length === 0}
-              >
-                <IconExport /> Download All PDF
-              </button>
+              <>
+                <button
+                  className="btn"
+                  onClick={() => sendKhataToWhatsApp(khata.customer)}
+                  disabled={khata.rows.length === 0}
+                >
+                  Send All WhatsApp
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => downloadKhata(khata.customer)}
+                  disabled={khata.rows.length === 0}
+                >
+                  <IconExport /> Download All PDF
+                </button>
+              </>
             )}
             <button className="btn" onClick={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()) }}>Close</button>
           </>
@@ -538,6 +555,9 @@ const Customers = () => {
               <div className="bulk-bar khata-bulk-bar">
                 <span>{khataSelected.size} selected</span>
                 <div className="bulk-bar-actions">
+                  <button className="btn btn-sm" onClick={() => sendKhataToWhatsApp(khata.customer, selectedKhataIds)}>
+                    Send selected WhatsApp
+                  </button>
                   <button className="btn btn-sm" onClick={() => downloadKhata(khata.customer, selectedKhataIds)}>
                     <IconExport /> Download selected PDF
                   </button>
