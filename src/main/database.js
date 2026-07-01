@@ -1020,7 +1020,7 @@ const dashboardBaseWhere = (filters, params) => {
     params.endDate = filters.endDate
   }
 
-  return where
+  return where;
 }
 
 const getOrderTotalsForRange = (startDate, endDate, filters = {}) => {
