@@ -115,6 +115,36 @@ const init = () => {
       created_at   TEXT    NOT NULL,
       FOREIGN KEY (customer_id) REFERENCES customers(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT    NOT NULL,
+      notes       TEXT,
+      amount      REAL    NOT NULL DEFAULT 0,
+      method      TEXT,
+      created_at  TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      expense_id   INTEGER NOT NULL,
+      type         TEXT    NOT NULL CHECK (type IN ('spend', 'deduct')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      created_at   TEXT    NOT NULL,
+      FOREIGN KEY (expense_id) REFERENCES expenses(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS expense_wallet_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      type         TEXT    NOT NULL CHECK (type IN ('credit', 'debit')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      expense_id   INTEGER,
+      created_at   TEXT    NOT NULL
+    );
   `)
 
   migrateOrdersSchema()
@@ -123,6 +153,7 @@ const init = () => {
   migrateOrderItemsSchema()
   migrateCustomerLedgerTypes()
   migrateProductsSchema()
+  migrateExpenseAmountColumn()
   migrateAppUser()
   return dbPath
 }
@@ -135,6 +166,27 @@ const migrateAppUser = () => {
       email         TEXT    NOT NULL UNIQUE COLLATE NOCASE,
       password_hash TEXT    NOT NULL,
       created_at    TEXT    NOT NULL
+    );
+  `)
+}
+
+const migrateExpenseAmountColumn = () => {
+  const cols = db.prepare('PRAGMA table_info(expenses)').all().map((c) => c.name)
+  if (!cols.includes('amount')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN amount REAL NOT NULL DEFAULT 0')
+  }
+  if (!cols.includes('method')) {
+    db.exec('ALTER TABLE expenses ADD COLUMN method TEXT')
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS expense_wallet_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      type         TEXT    NOT NULL CHECK (type IN ('credit', 'debit')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      expense_id   INTEGER,
+      created_at   TEXT    NOT NULL
     );
   `)
 }
@@ -1338,6 +1390,165 @@ const backupTo = (destPath) => {
   return db.backup(destPath)
 }
 
+/* -------------------------------------------------------------- expenses */
+
+const getExpenseWalletBalance = () => {
+  const row = db.prepare(`
+    SELECT
+      COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE 0 END), 0) AS total_added,
+      COALESCE(SUM(CASE WHEN type = 'debit' THEN amount ELSE 0 END), 0) AS total_spent,
+      COALESCE(SUM(CASE WHEN type = 'credit' THEN amount ELSE -amount END), 0) AS balance
+    FROM expense_wallet_ledger
+  `).get()
+  return {
+    total_added: num(row?.total_added),
+    total_spent: num(row?.total_spent),
+    balance: num(row?.balance)
+  }
+}
+
+const getExpenseWallet = () => {
+  const summary = getExpenseWalletBalance()
+  const rows = db
+    .prepare('SELECT * FROM expense_wallet_ledger ORDER BY datetime(created_at) DESC, id DESC LIMIT 50')
+    .all()
+  return { ...summary, rows }
+}
+
+const addExpenseWalletEntry = ({ type, amount, description = '', method = '', expense_id = null, created_at = nowISO() }) => {
+  const value = num(amount)
+  if (!['credit', 'debit'].includes(type)) throw new Error('Invalid wallet entry type')
+  if (value <= 0) throw new Error('Amount must be greater than 0')
+
+  const info = db.prepare(
+    `INSERT INTO expense_wallet_ledger (type, amount, description, method, expense_id, created_at)
+     VALUES (@type, @amount, @description, @method, @expense_id, @created_at)`
+  ).run({
+    type,
+    amount: value,
+    description,
+    method,
+    expense_id,
+    created_at
+  })
+  return db.prepare('SELECT * FROM expense_wallet_ledger WHERE id = ?').get(info.lastInsertRowid)
+}
+
+const addExpenseBalance = (data = {}) => {
+  addExpenseWalletEntry({
+    type: 'credit',
+    amount: data.amount,
+    description: data.description || 'Balance added',
+    method: data.method || 'Cash',
+    created_at: data.created_at || nowISO()
+  })
+  return getExpenseWallet()
+}
+
+const listExpenses = (filters = {}) => {
+  const search = String(filters.search || '').trim()
+  const page = Math.max(1, num(filters.page, 1))
+  const pageSize = Math.max(1, num(filters.pageSize, 25))
+  const where = []
+  const params = {}
+
+  if (search) {
+    where.push('(title LIKE @search OR notes LIKE @search)')
+    params.search = `%${search}%`
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const total = db.prepare(`SELECT COUNT(*) AS c FROM expenses ${whereSql}`).get(params).c
+  const rows = db
+    .prepare(`SELECT * FROM expenses ${whereSql} ORDER BY id DESC LIMIT @limit OFFSET @offset`)
+    .all({ ...params, limit: pageSize, offset: (page - 1) * pageSize })
+
+  return { rows, total, page, pageSize, wallet: getExpenseWalletBalance() }
+}
+
+const getExpenseById = (id) => {
+  return db.prepare('SELECT * FROM expenses WHERE id = ?').get(id)
+}
+
+const createExpense = (data) => {
+  const title = String(data.title || '').trim()
+  const amount = num(data.amount)
+  if (!title) throw new Error('Expense title is required')
+  if (amount <= 0) throw new Error('Expense amount must be greater than 0')
+
+  const wallet = getExpenseWalletBalance()
+  if (amount > wallet.balance) {
+    throw new Error(`Not enough balance. Available: ${wallet.balance}`)
+  }
+
+  const created = db.transaction(() => {
+    const info = db.prepare(
+      `INSERT INTO expenses (title, notes, amount, method, created_at)
+       VALUES (@title, @notes, @amount, @method, @created_at)`
+    ).run({
+      title,
+      notes: String(data.notes || '').trim(),
+      amount,
+      method: String(data.method || '').trim(),
+      created_at: nowISO()
+    })
+
+    const id = info.lastInsertRowid
+    addExpenseWalletEntry({
+      type: 'debit',
+      amount,
+      description: `Expense: ${title}`,
+      method: data.method || '',
+      expense_id: id
+    })
+    return getExpenseById(id)
+  })()
+
+  return created
+}
+
+const updateExpense = ({ id, data }) => {
+  const title = String(data.title || '').trim()
+  if (!title) throw new Error('Expense title is required')
+
+  db.prepare(
+    `UPDATE expenses
+     SET title = @title, notes = @notes, method = @method
+     WHERE id = @id`
+  ).run({
+    id,
+    title,
+    notes: String(data.notes || '').trim(),
+    method: String(data.method || '').trim()
+  })
+  return getExpenseById(id)
+}
+
+const deleteExpense = (id) => {
+  const expense = getExpenseById(id)
+  if (!expense) return { ok: true, count: 0 }
+
+  const result = db.transaction(() => {
+    db.prepare('DELETE FROM expense_wallet_ledger WHERE expense_id = ?').run(id)
+    db.prepare('DELETE FROM expense_ledger WHERE expense_id = ?').run(id)
+    return db.prepare('DELETE FROM expenses WHERE id = ?').run(id)
+  })()
+
+  return { ok: true, count: result.changes }
+}
+
+const deleteExpenses = (ids = []) => {
+  const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
+  if (!list.length) return { ok: true, count: 0 }
+  let count = 0
+  db.transaction(() => {
+    for (const id of list) {
+      count += deleteExpense(id).count
+    }
+  })()
+  return { ok: true, count }
+}
+
 export {
   init,
   backupTo,
@@ -1362,6 +1573,13 @@ export {
   receiveCustomerPayment,
   addCustomerCharge,
   addCustomerPayable,
+  getExpenseWallet,
+  addExpenseBalance,
+  listExpenses,
+  createExpense,
+  updateExpense,
+  deleteExpense,
+  deleteExpenses,
   getOrders,
   createOrder,
   updateOrder,

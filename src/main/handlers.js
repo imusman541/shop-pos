@@ -35,6 +35,15 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('customers:exportKhata', (_e, payload) => db.exportCustomerKhata(payload.id, payload.entryIds))
   ipcMain.handle('customers:shareKhataWhatsApp', (_e, payload) => db.shareCustomerKhataOnWhatsApp(payload.id, payload.entryIds))
 
+  // Expenses
+  ipcMain.handle('expenses:get', (_e, filters) => db.listExpenses(filters))
+  ipcMain.handle('expenses:getWallet', () => db.getExpenseWallet())
+  ipcMain.handle('expenses:addBalance', (_e, data) => db.addExpenseBalance(data))
+  ipcMain.handle('expenses:create', (_e, data) => db.createExpense(data))
+  ipcMain.handle('expenses:update', (_e, payload) => db.updateExpense(payload))
+  ipcMain.handle('expenses:delete', (_e, id) => db.deleteExpense(id))
+  ipcMain.handle('expenses:deleteMany', (_e, ids) => db.deleteExpenses(ids))
+
   // Orders
   ipcMain.handle('orders:get', (_e, filters) => db.getOrders(filters))
   ipcMain.handle('orders:create', (_e, data) => db.createOrder(data))

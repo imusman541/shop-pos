@@ -36,6 +36,14 @@ export const IconUsers = (p) => (
   </svg>
 )
 
+export const IconWallet = (p) => (
+  <svg {...base} className="ico" {...p}>
+    <path d="M20 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z" />
+    <path d="M16 12h.01" />
+    <path d="M3 9V6a2 2 0 0 1 2-2h12" />
+  </svg>
+)
+
 export const IconPlus = (p) => (
   <svg {...base} width="16" height="16" {...p}><path d="M12 5v14M5 12h14" /></svg>
 )

@@ -195,7 +195,8 @@ body {
 .main:has(.dashboard),
 .main:has(.products-page),
 .main:has(.orders-page),
-.main:has(.customers-page) {
+.main:has(.customers-page),
+.main:has(.expenses-page) {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1757,6 +1758,162 @@ textarea:focus {
   font-weight: 700;
 }
 
+/* ----------------------------------------------------------- expenses */
+
+.expenses-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 1.5vh, 16px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.expenses-page .page-head,
+.expenses-toolbar,
+.expense-wallet-summary {
+  flex-shrink: 0;
+  margin-bottom: 0;
+}
+
+.expense-wallet-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.expense-wallet-summary .khata-summary-card {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: #fff;
+}
+
+.expense-wallet-summary span {
+  display: block;
+  color: currentColor;
+  opacity: 0.72;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.expense-wallet-summary strong {
+  display: block;
+  font-size: 19px;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+@media (max-width: 720px) {
+  .expense-wallet-summary {
+    grid-template-columns: 1fr;
+  }
+}
+
+.expenses-toolbar {
+  padding: clamp(10px, 1.5vh, 16px);
+}
+
+.expenses-toolbar .field-search {
+  flex: 0 1 280px;
+  min-width: 220px;
+}
+
+.expenses-toolbar .field-filter {
+  flex: 0 0 160px;
+}
+
+.expenses-table-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.expenses-table-card .table-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.expenses-table-card .pager {
+  flex-shrink: 0;
+  margin-top: auto;
+  background: #fff;
+}
+
+.expenses-table {
+  min-width: 1100px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.expenses-table th,
+.expenses-table td {
+  text-align: center;
+}
+
+.expenses-table .row-actions {
+  justify-content: center;
+}
+
+.expenses-table .sticky-col {
+  position: sticky;
+  z-index: 2;
+  background: #fff;
+}
+
+.expenses-table thead .sticky-col {
+  z-index: 3;
+  background: #fbfcfd;
+}
+
+.expenses-table .sticky-col-actions {
+  right: 0;
+  min-width: 140px;
+  width: 140px;
+  box-shadow: -8px 0 12px -8px rgba(16, 24, 40, 0.08);
+}
+
+.expenses-table .sticky-col-check {
+  left: 0;
+  min-width: 44px;
+  width: 44px;
+}
+
+.expenses-table .sticky-col-name {
+  left: 44px;
+  min-width: 180px;
+  width: 180px;
+  box-shadow: 8px 0 12px -8px rgba(16, 24, 40, 0.08);
+}
+
+.expenses-table tbody tr:hover .sticky-col {
+  background: #fbfcfd;
+}
+
+.expenses-table tbody tr.row-selected .sticky-col {
+  background: #fffaf5;
+}
+
+.expense-summary {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.expense-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.khata-entry-card .hint {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
 /* --------------------------------------------------------------- drawer */
 
 .drawer-backdrop {
@@ -1911,6 +2068,9 @@ textarea:focus {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 15px;
+}
+.form-grid.form-grid-one {
+  grid-template-columns: 1fr;
 }
 .form-grid .full { grid-column: 1 / -1; }
 .form-grid label {

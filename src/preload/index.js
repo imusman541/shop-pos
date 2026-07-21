@@ -35,6 +35,15 @@ const api = {
   exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
   shareCustomerKhataOnWhatsApp: (id, entryIds = []) => ipcRenderer.invoke('customers:shareKhataWhatsApp', { id, entryIds }),
 
+  // Expenses
+  getExpenses: (filters) => ipcRenderer.invoke('expenses:get', filters),
+  getExpenseWallet: () => ipcRenderer.invoke('expenses:getWallet'),
+  addExpenseBalance: (data) => ipcRenderer.invoke('expenses:addBalance', data),
+  createExpense: (data) => ipcRenderer.invoke('expenses:create', data),
+  updateExpense: (id, data) => ipcRenderer.invoke('expenses:update', { id, data }),
+  deleteExpense: (id) => ipcRenderer.invoke('expenses:delete', id),
+  deleteExpenses: (ids) => ipcRenderer.invoke('expenses:deleteMany', ids),
+
   // Orders
   getOrders: (filters) => ipcRenderer.invoke('orders:get', filters),
   createOrder: (data) => ipcRenderer.invoke('orders:create', data),
