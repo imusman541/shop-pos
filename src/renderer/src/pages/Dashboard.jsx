@@ -95,7 +95,7 @@ const Dashboard = () => {
       <div className="page-head">
         <div>
           <h1>Dashboard</h1>
-          <p>Sales, profit and items sold over time. Cancelled orders are excluded.</p>
+          <p>Sales and profit follow payment dates. Partial payments count only what was received. Cancelled orders are excluded.</p>
         </div>
       </div>
 

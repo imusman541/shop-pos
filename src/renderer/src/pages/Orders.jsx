@@ -8,7 +8,7 @@ import { money, int, fmtDate, daysAgo } from '../lib/format'
 import { IconPlus, IconExport, IconEdit, IconTrash, IconInfo } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { status: 'DONE', customer_id: '', paid_amount: '', items: [] }
+const EMPTY = { status: 'PAID', customer_id: '', paid_amount: '', items: [] }
 
 const orderQty = (items) => {
   return items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
@@ -40,6 +40,30 @@ const isValidTotalPrice = (v) => {
   if (v === '' || v === null || v === undefined) return false
   const n = Number(v)
   return Number.isFinite(n) && n > 0
+}
+
+const statusBadgeClass = (status) => {
+  if (status === 'PAID' || status === 'DONE') return 'paid'
+  if (status === 'NOT_PAID') return 'unpaid'
+  if (status === 'PARTIALLY_PAID') return 'partial'
+  return 'cancelled'
+}
+
+const statusLabel = (status) => {
+  if (status === 'PAID' || status === 'DONE') return 'Paid'
+  if (status === 'NOT_PAID') return 'Not paid'
+  if (status === 'PARTIALLY_PAID') return 'Partially Paid'
+  if (status === 'CANCELLED') return 'Cancelled'
+  return status
+}
+
+const resolveFormStatus = (requestedStatus, paidAmount, total) => {
+  if (requestedStatus === 'CANCELLED') return 'CANCELLED'
+  const paid = Math.max(0, Number(paidAmount) || 0)
+  const orderTot = Math.max(0, Number(total) || 0)
+  if (orderTot <= 0 || paid + 0.009 >= orderTot) return 'PAID'
+  if (paid <= 0.009) return 'NOT_PAID'
+  return 'PARTIALLY_PAID'
 }
 
 const TotalPriceLabel = () => {
@@ -120,6 +144,50 @@ const Orders = () => {
     [form.items]
   )
 
+  const formOrderTotal = useMemo(() => orderTotal(form.items), [form.items])
+  const formRemaining = Math.max(0, formOrderTotal - (Number(form.paid_amount) || 0))
+
+  const applyStatus = (nextStatus) => {
+    setForm((f) => {
+      const total = orderTotal(f.items)
+      if (nextStatus === 'CANCELLED') {
+        return { ...f, status: 'CANCELLED' }
+      }
+      if (nextStatus === 'PAID') {
+        return {
+          ...f,
+          status: 'PAID',
+          paid_amount: total > 0 ? String(total) : (f.paid_amount === '' ? '0' : f.paid_amount)
+        }
+      }
+      if (nextStatus === 'NOT_PAID') {
+        return { ...f, status: 'NOT_PAID', paid_amount: '0' }
+      }
+      // PARTIALLY_PAID — keep current paid if already partial; otherwise clear so user enters it
+      const paid = Number(f.paid_amount) || 0
+      const alreadyPartial = total > 0 && paid > 0.009 && paid + 0.009 < total
+      return {
+        ...f,
+        status: 'PARTIALLY_PAID',
+        paid_amount: alreadyPartial ? f.paid_amount : ''
+      }
+    })
+  }
+
+  const applyPaidAmount = (value) => {
+    setForm((f) => {
+      if (f.status === 'CANCELLED') {
+        return { ...f, paid_amount: value }
+      }
+      const total = orderTotal(f.items)
+      return {
+        ...f,
+        paid_amount: value,
+        status: resolveFormStatus(f.status, value, total)
+      }
+    })
+  }
+
   const syncProducts = (ids) => {
     setForm((f) => {
       const idSet = new Set(ids.map(Number))
@@ -161,7 +229,7 @@ const Orders = () => {
     setForm({
       status: o.status,
       customer_id: o.customer_id || '',
-      paid_amount: o.paid_amount || '',
+      paid_amount: o.paid_amount ?? '',
       items: o.items.map((i) => ({
         product_id: i.product_id,
         product_name: i.product_name,
@@ -182,13 +250,36 @@ const Orders = () => {
       toast(`Enter a total price for ${invalid.product_name || 'each product'}`)
       return
     }
+    const total = orderTotal(form.items)
+    const paid = form.paid_amount === '' ? 0 : Number(form.paid_amount)
+    if (form.paid_amount !== '' && !Number.isFinite(Number(form.paid_amount))) {
+      toast('Enter a valid paid amount')
+      return
+    }
+    if (Number.isFinite(paid) && paid < 0) {
+      toast('Paid amount cannot be negative')
+      return
+    }
+    if (Number.isFinite(paid) && paid > total + 0.009) {
+      toast('Paid amount cannot exceed order total')
+      return
+    }
+    if (form.status === 'PARTIALLY_PAID' && (paid <= 0.009 || paid + 0.009 >= total)) {
+      toast('For Partially Paid, enter an amount greater than 0 and less than the order total')
+      return
+    }
     setSaving(true)
     try {
+      const payload = {
+        ...form,
+        status: resolveFormStatus(form.status, paid, total),
+        paid_amount: paid
+      }
       if (editing) {
-        await window.api.updateOrder(editing.id, form)
+        await window.api.updateOrder(editing.id, payload)
         toast('Order updated')
       } else {
-        const created = await window.api.createOrder(form)
+        const created = await window.api.createOrder(payload)
         toast(`Order created · #${created.id}`)
       }
       setModalOpen(false)
@@ -246,7 +337,7 @@ const Orders = () => {
       <div className="page-head">
         <div>
           <h1>Orders</h1>
-          <p>Record sales. Each order gets a unique order number.</p>
+          <p>Record sales. Dashboard sales count when payments are received.</p>
         </div>
         <div className="head-actions">
           <button className="btn" onClick={doExport}><IconExport /> Export</button>
@@ -280,7 +371,9 @@ const Orders = () => {
           <label>Status</label>
           <select value={filters.status} onChange={(e) => updateFilter({ status: e.target.value })}>
             <option value="">All</option>
-            <option value="DONE">Done</option>
+            <option value="PAID">Paid</option>
+            <option value="NOT_PAID">Not paid</option>
+            <option value="PARTIALLY_PAID">Partially Paid</option>
             <option value="CANCELLED">Cancelled</option>
           </select>
         </div>
@@ -323,6 +416,7 @@ const Orders = () => {
                 <th>Customer</th>
                 <th>Qty</th>
                 <th>Status</th>
+                <th>Paid</th>
                 <th className="sticky-col sticky-col-total">Total</th>
                 <th className="sticky-col sticky-col-profit">Profit</th>
                 <th className="sticky-col sticky-col-date">Date</th>
@@ -331,9 +425,9 @@ const Orders = () => {
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={10}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={11}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={10}>
+                <tr><td colSpan={11}>
                   <div className="empty-state">
                     <strong>No orders found</strong>
                     Create an order or adjust the filters.
@@ -367,7 +461,12 @@ const Orders = () => {
                     </td>
                     <td>{o.customer_name || <span className="muted-dash">—</span>}</td>
                     <td className="num">{int(orderQty(o.items))}</td>
-                    <td><span className={`badge ${o.status === 'DONE' ? 'done' : 'cancelled'}`}>{o.status}</span></td>
+                    <td>
+                      <span className={`badge ${statusBadgeClass(o.status)}`}>
+                        {statusLabel(o.status)}
+                      </span>
+                    </td>
+                    <td className="num">{money(o.paid_amount)}</td>
                     <td className="num sticky-col sticky-col-total"><strong>{money(orderTotal(o.items))}</strong></td>
                     <td className="num sticky-col sticky-col-profit"><strong>{money(orderProfit(o.items))}</strong></td>
                     <td className="col-date sticky-col sticky-col-date">{fmtDate(o.created_at)}</td>
@@ -433,6 +532,42 @@ const Orders = () => {
                 </tfoot>
               </table>
             </div>
+            {(viewingOrder.payments?.length > 0 || Number(viewingOrder.paid_amount) > 0) && (
+              <div className="order-payments-block">
+                <div className="order-lines-head">Payments</div>
+                <div className="table-wrap">
+                  <table className="order-items-table">
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(viewingOrder.payments || []).map((p) => (
+                        <tr key={p.id}>
+                          <td>{fmtDate(p.created_at)}</td>
+                          <td className="num">{money(p.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td><strong>Paid / Remaining</strong></td>
+                        <td className="num">
+                          <strong>
+                            {money(viewingOrder.paid_amount)}
+                            {Number(viewingOrder.remaining_amount) > 0
+                              ? ` · ${money(viewingOrder.remaining_amount)} due`
+                              : ''}
+                          </strong>
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </Drawer>
@@ -499,6 +634,10 @@ const Orders = () => {
                   </div>
                 </div>
               ))}
+              <div className="order-lines-summary">
+                <span>Order total</span>
+                <strong>{money(formOrderTotal)}</strong>
+              </div>
             </div>
           )}
 
@@ -518,24 +657,49 @@ const Orders = () => {
               </select>
             </div>
             <div>
-              <label>Paid Amount</label>
+              <label>
+                <span className="label-with-info">
+                  Paid Amount
+                  <span className="info-tip" tabIndex={0} aria-label="Sales are counted on the date this payment is recorded.">
+                    <IconInfo />
+                    <span className="info-tip-text">
+                      Sales appear on the dashboard on the date you record each payment. Increasing paid amount later adds a new payment for today.
+                    </span>
+                  </span>
+                </span>
+              </label>
               <input
                 type="number"
                 min="0"
                 step="any"
                 value={form.paid_amount}
-                onChange={(e) => setForm((f) => ({ ...f, paid_amount: e.target.value }))}
+                onChange={(e) => applyPaidAmount(e.target.value)}
                 placeholder="e.g. 500"
               />
+              {formOrderTotal > 0 && (
+                <div className="field-hint">
+                  {formRemaining > 0.009
+                    ? `${money(formRemaining)} remaining`
+                    : 'Fully paid'}
+                </div>
+              )}
             </div>
           </div>
 
           <div>
             <label>Status</label>
-            <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-              <option value="DONE">Done</option>
+            <select
+              value={form.status}
+              onChange={(e) => applyStatus(e.target.value)}
+            >
+              <option value="PAID">Paid</option>
+              <option value="NOT_PAID">Not paid</option>
+              <option value="PARTIALLY_PAID">Partially Paid</option>
               <option value="CANCELLED">Cancelled</option>
             </select>
+            {form.status === 'PARTIALLY_PAID' && !(Number(form.paid_amount) > 0) && (
+              <div className="field-hint">Enter a paid amount greater than 0 and less than the order total.</div>
+            )}
           </div>
         </div>
       </Drawer>

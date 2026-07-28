@@ -416,7 +416,10 @@ td.right, th.right { text-align: right; }
 .badge.in { background: #e4f4ec; color: #1f8a57; }
 .badge.out { background: #fcebe8; color: #c0432f; }
 .badge.payable { background: var(--amber-soft); color: #c9742a; }
-.badge.done { background: #e4f4ec; color: #1f8a57; }
+.badge.done,
+.badge.paid { background: #e4f4ec; color: #1f8a57; }
+.badge.unpaid { background: #fcebe8; color: #c0432f; }
+.badge.partial { background: #fbeada; color: #c9742a; }
 .badge.cancelled { background: #f0f1f3; color: #6b7787; }
 
 .row-actions { display: flex; gap: 6px; justify-content: flex-end; }
@@ -1390,6 +1393,35 @@ tbody tr.row-selected:hover {
 
 .order-line-fields input {
   width: 100%;
+}
+
+.order-lines-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+  border-top: 1px solid var(--line);
+  background: #fbfcfd;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.order-lines-summary strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.order-payments-block {
+  margin-top: 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.field-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .form-grid-two {

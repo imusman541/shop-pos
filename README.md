@@ -14,7 +14,8 @@ Built with **Electron + electron-vite + React + better-sqlite3 + Recharts + Shee
 - Line chart with three lines: Sales, Profit, and Items Sold (Items uses a second axis so it stays readable next to money)
 - Custom hover tooltip showing the date plus Sales, Profit and Items sold
 - KPI cards: Total Sales, Profit, Total Items Sold
-- Only `DONE` orders count toward totals (cancelled orders are excluded)
+- Sales and profit follow payment dates (partial payments count only what was received)
+- Cancelled orders are excluded from totals
 
 **Products**
 - Filter by name, by status (In Stock / Out of Stock), and by price (greater than / less than / equal to a number)
@@ -26,7 +27,7 @@ Built with **Electron + electron-vite + React + better-sqlite3 + Recharts + Shee
 - Every product gets a unique **product number** (shown in the table, filters and exports)
 
 **Orders**
-- Filter by Order ID, Product ID, Product name, date range, and status (Done / Cancelled)
+- Filter by Order ID, Product ID, Product name, date range, and status (Paid / Not paid / Partially Paid / Cancelled)
 - Create and Edit orders (product, quantity, price, margin/profit, status)
 - If you leave price or margin blank, they are pulled automatically from the linked product
 - Export all orders to Excel
@@ -146,7 +147,7 @@ shop-pos/
 ## Good next steps (not yet included)
 
 - Automatic backup of `pos.db` to a second folder / cloud drive on a schedule (important for a real shop).
-- Decrement product stock automatically when a `DONE` order is created.
+- Decrement product stock automatically when a Paid, Not paid, or Partially Paid order is created.
 - Receipt printing to a thermal printer (ESC/POS) and barcode-scanner support (scanners type into the focused field, so very little code is needed).
 - Login / multiple cashier accounts.
 

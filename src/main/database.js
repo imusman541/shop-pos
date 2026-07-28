@@ -151,6 +151,7 @@ const init = () => {
   migrateOrderArchive()
   migrateOrderCustomerFields()
   migrateOrderItemsSchema()
+  migrateOrderPayments()
   migrateCustomerLedgerTypes()
   migrateProductsSchema()
   migrateExpenseAmountColumn()
@@ -427,6 +428,127 @@ const migrateOrderItemsSchema = () => {
   `)
 }
 
+const PAYMENT_EPS = 0.009
+
+const isActiveOrderStatus = (status) => {
+  return status === 'PAID' || status === 'NOT_PAID' || status === 'PARTIALLY_PAID' || status === 'DONE'
+}
+
+const resolveOrderStatus = (requestedStatus, paidAmount, orderTotal) => {
+  if (requestedStatus === 'CANCELLED') return 'CANCELLED'
+  const paid = Math.max(0, num(paidAmount))
+  const total = Math.max(0, num(orderTotal))
+  if (total <= 0 || paid + PAYMENT_EPS >= total) return 'PAID'
+  if (paid <= PAYMENT_EPS) return 'NOT_PAID'
+  return 'PARTIALLY_PAID'
+}
+
+const migrateOrderPayments = () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS order_payments (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      order_id    INTEGER NOT NULL,
+      amount      REAL    NOT NULL DEFAULT 0,
+      created_at  TEXT    NOT NULL,
+      FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
+    );
+  `)
+
+  const existing = db.prepare('SELECT COUNT(*) AS c FROM order_payments').get().c
+  if (existing === 0) {
+    const orders = db
+      .prepare('SELECT id, paid_amount, created_at, status FROM orders WHERE paid_amount > 0')
+      .all()
+    const insert = db.prepare(
+      `INSERT INTO order_payments (order_id, amount, created_at) VALUES (@order_id, @amount, @created_at)`
+    )
+    db.transaction(() => {
+      for (const order of orders) {
+        if (order.status === 'CANCELLED') continue
+        insert.run({
+          order_id: order.id,
+          amount: num(order.paid_amount),
+          created_at: order.created_at || nowISO()
+        })
+      }
+    })()
+  }
+
+  // Migrate legacy DONE → payment-based statuses (Paid / Not paid / Partially Paid)
+  db.prepare(`UPDATE orders SET status = 'PAID' WHERE status = 'DONE'`).run()
+
+  const activeOrders = db
+    .prepare(`SELECT id, paid_amount, status FROM orders WHERE isArchive = 0 AND status != 'CANCELLED'`)
+    .all()
+  const sumItems = db.prepare('SELECT COALESCE(SUM(total_price), 0) AS total FROM order_items WHERE order_id = ?')
+  const updateStatus = db.prepare('UPDATE orders SET status = ? WHERE id = ?')
+  db.transaction(() => {
+    for (const order of activeOrders) {
+      const total = num(sumItems.get(order.id)?.total)
+      const next = resolveOrderStatus(order.status, order.paid_amount, total)
+      if (next !== order.status) updateStatus.run(next, order.id)
+    }
+  })()
+}
+
+const sumPaymentsForOrder = (orderId) => {
+  const row = db.prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM order_payments WHERE order_id = ?').get(orderId)
+  return num(row?.total)
+}
+
+const listPaymentsForOrder = (orderId) => {
+  return db
+    .prepare('SELECT id, order_id, amount, created_at FROM order_payments WHERE order_id = ? ORDER BY datetime(created_at), id')
+    .all(orderId)
+    .map((row) => ({
+      id: row.id,
+      order_id: row.order_id,
+      amount: num(row.amount),
+      created_at: row.created_at
+    }))
+}
+
+const insertOrderPayment = (orderId, amount, createdAt = nowISO()) => {
+  const value = num(amount)
+  if (value <= 0) return null
+  const info = db.prepare(
+    `INSERT INTO order_payments (order_id, amount, created_at) VALUES (@order_id, @amount, @created_at)`
+  ).run({ order_id: orderId, amount: value, created_at: createdAt })
+  return info.lastInsertRowid
+}
+
+/** Sync order_payments so their sum matches targetPaid. Extra payments use paymentAt (default now). */
+const syncOrderPayments = (orderId, targetPaid, { paymentAt = nowISO(), seedAt = null } = {}) => {
+  const target = Math.max(0, num(targetPaid))
+  const current = sumPaymentsForOrder(orderId)
+  const delta = target - current
+
+  if (Math.abs(delta) <= PAYMENT_EPS) return
+
+  if (delta > PAYMENT_EPS) {
+    insertOrderPayment(orderId, delta, seedAt || paymentAt)
+    return
+  }
+
+  // Reduce payments from newest to oldest when paid_amount is lowered
+  let remaining = Math.abs(delta)
+  const payments = db
+    .prepare('SELECT id, amount FROM order_payments WHERE order_id = ? ORDER BY datetime(created_at) DESC, id DESC')
+    .all(orderId)
+
+  for (const payment of payments) {
+    if (remaining <= PAYMENT_EPS) break
+    const amount = num(payment.amount)
+    if (amount <= remaining + PAYMENT_EPS) {
+      db.prepare('DELETE FROM order_payments WHERE id = ?').run(payment.id)
+      remaining -= amount
+    } else {
+      db.prepare('UPDATE order_payments SET amount = ? WHERE id = ?').run(amount - remaining, payment.id)
+      remaining = 0
+    }
+  }
+}
+
 const migrateCustomerLedgerTypes = () => {
   const table = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'customer_ledger'").get()
   if (!table?.sql || table.sql.includes("'payable'")) return
@@ -573,7 +695,16 @@ const attachItems = (order) => {
     .prepare('SELECT * FROM order_items WHERE order_id = ? ORDER BY id')
     .all(order.id)
     .map(mapOrderItem)
-  return { ...order, items }
+  const payments = listPaymentsForOrder(order.id)
+  const order_total = items.reduce((sum, item) => sum + num(item.total_price), 0)
+  const paid_amount = num(order.paid_amount)
+  return {
+    ...order,
+    items,
+    payments,
+    order_total,
+    remaining_amount: Math.max(0, order_total - paid_amount)
+  }
 }
 
 const getOrderById = (id) => {
@@ -821,7 +952,7 @@ const addCustomerPayable = ({ id, data }) => {
 
 const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items }) => {
   db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(orderId)
-  if (status !== 'DONE' || !customerId) return
+  if (!isActiveOrderStatus(status) || !customerId) return
 
   const total = items.reduce((sum, item) => sum + num(item.total_price), 0)
   if (total <= 0) return
@@ -900,10 +1031,12 @@ const createOrder = (data) => {
   const items = normalizeOrderItems(data)
   if (!items.length) throw new Error('Order must include at least one product')
 
-  const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
   const created_at = data.created_at || nowISO()
   const customer_id = data.customer_id ? num(data.customer_id) : null
-  const paid_amount = num(data.paid_amount)
+  const resolved = items.map((raw) => resolveItemPricing(raw))
+  const orderTotal = resolved.reduce((sum, item) => sum + num(item.total_price), 0)
+  const paid_amount = Math.min(Math.max(num(data.paid_amount), 0), orderTotal)
+  const status = resolveOrderStatus(data.status, paid_amount, orderTotal)
 
   const insertOrder = db.prepare(
     `INSERT INTO orders (status, created_at, isArchive, customer_id, paid_amount)
@@ -917,11 +1050,11 @@ const createOrder = (data) => {
   const orderId = db.transaction(() => {
     const info = insertOrder.run({ status, created_at, customer_id, paid_amount })
     const id = info.lastInsertRowid
-    const resolved = items.map((raw) => resolveItemPricing(raw))
     for (const item of resolved) {
       insertItem.run({ order_id: id, ...item })
     }
-    if (status === 'DONE') deductInventory(resolved)
+    if (isActiveOrderStatus(status)) deductInventory(resolved)
+    syncOrderPayments(id, paid_amount, { seedAt: created_at })
     replaceOrderLedger({ orderId: id, customerId: customer_id, status, paidAmount: paid_amount, items: resolved })
     return id
   })()
@@ -933,33 +1066,36 @@ const updateOrder = ({ id, data }) => {
   const items = normalizeOrderItems(data)
   if (!items.length) throw new Error('Order must include at least one product')
 
-  const status = data.status === 'CANCELLED' ? 'CANCELLED' : 'DONE'
   const customer_id = data.customer_id ? num(data.customer_id) : null
-  const paid_amount = num(data.paid_amount)
   const insertItem = db.prepare(
     `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
      VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
   )
-  const existingOrder = db.prepare('SELECT status FROM orders WHERE id = ?').get(id)
+  const existingOrder = db.prepare('SELECT status, created_at FROM orders WHERE id = ?').get(id)
   const existingItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
   const existingByProduct = new Map(existingItems.map((i) => [i.product_id, i]))
 
   db.transaction(() => {
-    if (existingOrder?.status === 'DONE') restoreInventory(existingItems)
-
-    db.prepare('UPDATE orders SET status = @status, customer_id = @customer_id, paid_amount = @paid_amount WHERE id = @id')
-      .run({ id, status, customer_id, paid_amount })
-    db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
+    if (isActiveOrderStatus(existingOrder?.status)) restoreInventory(existingItems)
 
     const resolved = items.map((raw) => {
       const productId = raw.product_id ? num(raw.product_id) : null
       const existing = productId ? existingByProduct.get(productId) : null
       return resolveItemPricing(raw, existing)
     })
+    const orderTotal = resolved.reduce((sum, item) => sum + num(item.total_price), 0)
+    const paid_amount = Math.min(Math.max(num(data.paid_amount), 0), orderTotal)
+    const status = resolveOrderStatus(data.status, paid_amount, orderTotal)
+
+    db.prepare('UPDATE orders SET status = @status, customer_id = @customer_id, paid_amount = @paid_amount WHERE id = @id')
+      .run({ id, status, customer_id, paid_amount })
+    db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
+
     for (const item of resolved) {
       insertItem.run({ order_id: id, ...item })
     }
-    if (status === 'DONE') deductInventory(resolved)
+    if (isActiveOrderStatus(status)) deductInventory(resolved)
+    syncOrderPayments(id, paid_amount, { paymentAt: nowISO() })
     replaceOrderLedger({ orderId: id, customerId: customer_id, status, paidAmount: paid_amount, items: resolved })
   })()
 
@@ -971,8 +1107,9 @@ const deleteOrder = (id) => {
   const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
 
   db.transaction(() => {
-    if (order?.status === 'DONE') restoreInventory(items)
+    if (isActiveOrderStatus(order?.status)) restoreInventory(items)
     db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(id)
+    db.prepare('DELETE FROM order_payments WHERE order_id = ?').run(id)
     db.prepare('UPDATE orders SET isArchive = 1 WHERE id = ? AND isArchive = 0').run(id)
   })()
 
@@ -982,7 +1119,6 @@ const deleteOrder = (id) => {
 const deleteOrders = (ids = []) => {
   const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
   if (!list.length) return { ok: true, count: 0 }
-  const placeholders = list.map(() => '?').join(', ')
 
   let count = 0
   db.transaction(() => {
@@ -990,8 +1126,9 @@ const deleteOrders = (ids = []) => {
       const order = db.prepare('SELECT status FROM orders WHERE id = ? AND isArchive = 0').get(id)
       if (!order) continue
       const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(id)
-      if (order.status === 'DONE') restoreInventory(items)
+      if (isActiveOrderStatus(order.status)) restoreInventory(items)
       db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(id)
+      db.prepare('DELETE FROM order_payments WHERE order_id = ?').run(id)
       const result = db.prepare('UPDATE orders SET isArchive = 1 WHERE isArchive = 0 AND id = ?').run(id)
       count += result.changes
     }
@@ -1001,7 +1138,9 @@ const deleteOrders = (ids = []) => {
 }
 
 /* ------------------------------------------------------------ dashboard */
-// Only DONE orders count toward sales / profit / items sold.
+// Sales / profit / items are attributed to payment dates (order_payments),
+// not order creation dates. Profit uses cost-recovery-first: each payment
+// first covers remaining product cost, then counts as profit.
 
 const parseIsoDate = (iso) => {
   const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number)
@@ -1052,79 +1191,90 @@ const normalizeProductIds = (filters = {}) => {
   return [...new Set(list.map((id) => Number(id)).filter((id) => id > 0))]
 }
 
-const productIdsFilter = (filters, params, alias = 'i') => {
-  const ids = normalizeProductIds(filters)
-  if (!ids.length) return ''
-  const placeholders = ids.map((_, idx) => `@pid${idx}`).join(', ')
-  ids.forEach((id, idx) => { params[`pid${idx}`] = id })
-  return ` AND ${alias}.product_id IN (${placeholders})`
+/**
+ * Allocate each payment into sales / profit / items using cost-recovery-first.
+ * When productIds is set, only the share of each payment attributable to those
+ * products is counted (by line total_price weight).
+ */
+const allocateOrderPaymentMetrics = (items, payments, productIds = []) => {
+  const allItems = items || []
+  const orderTotal = allItems.reduce((sum, item) => sum + num(item.total_price), 0)
+  if (orderTotal <= 0 || !payments?.length) return []
+
+  const filteredItems = productIds.length
+    ? allItems.filter((item) => productIds.includes(num(item.product_id)))
+    : allItems
+  if (!filteredItems.length) return []
+
+  const filteredTotal = filteredItems.reduce((sum, item) => sum + num(item.total_price), 0)
+  if (filteredTotal <= 0) return []
+
+  const filteredQty = filteredItems.reduce((sum, item) => sum + num(item.quantity), 0)
+  let remainingCost = filteredItems.reduce(
+    (sum, item) => sum + num(item.unit_cost) * num(item.quantity),
+    0
+  )
+  const share = filteredTotal / orderTotal
+
+  return payments.map((payment) => {
+    const amount = Math.max(0, num(payment.amount) * share)
+    const costPart = Math.min(amount, Math.max(0, remainingCost))
+    const profitPart = amount - costPart
+    remainingCost -= costPart
+    return {
+      date: String(payment.created_at || '').slice(0, 10),
+      sales: amount,
+      profit: profitPart,
+      items: orderTotal > 0 ? filteredQty * (num(payment.amount) / orderTotal) : 0
+    }
+  })
 }
 
-const dashboardBaseWhere = (filters, params) => {
-  const where = ["o.status = 'DONE'", 'o.isArchive = 0']
-
-  if (filters.startDate) {
-    where.push('date(o.created_at) >= date(@startDate)')
-    params.startDate = filters.startDate
-  }
-  if (filters.endDate) {
-    where.push('date(o.created_at) <= date(@endDate)')
-    params.endDate = filters.endDate
-  }
-
-  return where;
-}
-
-const getOrderTotalsForRange = (startDate, endDate, filters = {}) => {
-  const params = { startDate, endDate }
-  const where = dashboardBaseWhere({ ...filters, startDate, endDate }, params)
-  const productFilter = productIdsFilter(filters, params)
-
-  const whereSql = 'WHERE ' + where.join(' AND ') + productFilter
-  const row = db
+const loadDashboardPaymentAllocations = (filters = {}) => {
+  const productIds = normalizeProductIds(filters)
+  const orders = db
     .prepare(
-      `SELECT SUM(i.total_price) AS sales,
-              SUM(i.profit)      AS profit,
-              SUM(i.quantity)    AS items
-       FROM order_items i
-       JOIN orders o ON o.id = i.order_id
-       ${whereSql}`
+      `SELECT id FROM orders
+       WHERE isArchive = 0 AND status IN ('PAID', 'NOT_PAID', 'PARTIALLY_PAID', 'DONE')`
     )
-    .get(params)
+    .all()
 
-  return {
-    sales: num(row.sales),
-    profit: num(row.profit),
-    items: num(row.items)
+  const getItems = db.prepare('SELECT * FROM order_items WHERE order_id = ?')
+  const getPayments = db.prepare(
+    `SELECT id, amount, created_at FROM order_payments
+     WHERE order_id = ?
+     ORDER BY datetime(created_at), id`
+  )
+
+  const allocations = []
+  for (const order of orders) {
+    const items = getItems.all(order.id)
+    const payments = getPayments.all(order.id)
+    allocations.push(...allocateOrderPaymentMetrics(items, payments, productIds))
   }
+  return allocations
 }
 
-const getDashboard = (filters = {}) => {
-  const params = {}
-  const where = dashboardBaseWhere(filters, params)
-  const productFilter = productIdsFilter(filters, params)
-  const whereSql = 'WHERE ' + where.join(' AND ') + productFilter
-  const series = db
-    .prepare(
-      `SELECT date(o.created_at) AS date,
-              SUM(i.total_price) AS sales,
-              SUM(i.profit)      AS profit,
-              SUM(i.quantity)    AS items
-       FROM order_items i
-       JOIN orders o ON o.id = i.order_id
-       ${whereSql}
-       GROUP BY date(o.created_at)
-       ORDER BY date(o.created_at)`
-    )
-    .all(params)
+const aggregateAllocations = (allocations, startDate, endDate) => {
+  const byDate = {}
+  for (const row of allocations) {
+    if (!row.date) continue
+    if (startDate && row.date < startDate) continue
+    if (endDate && row.date > endDate) continue
+    if (!byDate[row.date]) byDate[row.date] = { date: row.date, sales: 0, profit: 0, items: 0 }
+    byDate[row.date].sales += row.sales
+    byDate[row.date].profit += row.profit
+    byDate[row.date].items += row.items
+  }
+
+  const series = Object.values(byDate)
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))
     .map((r) => ({
       date: r.date,
       sales: num(r.sales),
       profit: num(r.profit),
       items: num(r.items)
     }))
-
-  const filledSeries = fillSeriesGaps(series, filters.startDate, filters.endDate)
 
   const totals = series.reduce(
     (a, r) => ({
@@ -1135,12 +1285,29 @@ const getDashboard = (filters = {}) => {
     { sales: 0, profit: 0, items: 0 }
   )
 
+  return { series, totals }
+}
+
+const getOrderTotalsForRange = (startDate, endDate, filters = {}) => {
+  const allocations = loadDashboardPaymentAllocations(filters)
+  return aggregateAllocations(allocations, startDate, endDate).totals
+}
+
+const getDashboard = (filters = {}) => {
+  const allocations = loadDashboardPaymentAllocations(filters)
+  const { series, totals } = aggregateAllocations(allocations, filters.startDate, filters.endDate)
+  const filledSeries = fillSeriesGaps(series, filters.startDate, filters.endDate)
+
   let previousTotals = { sales: 0, profit: 0, items: 0 }
   let previousPeriod = null
 
   if (filters.startDate && filters.endDate) {
     previousPeriod = previousPeriodDates(filters.startDate, filters.endDate)
-    previousTotals = getOrderTotalsForRange(previousPeriod.startDate, previousPeriod.endDate, filters)
+    previousTotals = aggregateAllocations(
+      allocations,
+      previousPeriod.startDate,
+      previousPeriod.endDate
+    ).totals
   }
 
   return { series: filledSeries, totals, previousTotals, previousPeriod }
@@ -1162,7 +1329,7 @@ const exportOrders = async () => {
   const rows = db
     .prepare(
       `SELECT o.id AS order_number, i.product_id, i.product_name, i.quantity,
-              i.total_price, i.unit_cost, i.profit, o.status, o.created_at
+              i.total_price, i.unit_cost, i.profit, o.paid_amount, o.status, o.created_at
        FROM orders o
        JOIN order_items i ON i.order_id = o.id
        WHERE o.isArchive = 0
