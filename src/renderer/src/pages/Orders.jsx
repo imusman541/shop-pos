@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import Drawer from '../components/Drawer'
 import DateRangePicker from '../components/DateRangePicker'
 import ProductMultiSelect from '../components/ProductMultiSelect'
+import StatusMultiSelect from '../components/StatusMultiSelect'
 import Pagination from '../components/Pagination'
 import { useToast } from '../components/Toast'
 import { money, int, fmtDate, daysAgo } from '../lib/format'
@@ -81,7 +82,8 @@ const TotalPriceLabel = () => {
 const Orders = () => {
   const toast = useToast()
   const [filters, setFilters] = useState({
-    orderId: '', productId: '', productName: '', startDate: daysAgo(30), endDate: daysAgo(0), status: ''
+    orderId: '', productId: '', productName: '', customerName: '',
+    startDate: daysAgo(30), endDate: daysAgo(0), status: []
   })
   const [page, setPage] = useState(1)
   const [data, setData] = useState({ rows: [], total: 0 })
@@ -323,13 +325,14 @@ const Orders = () => {
 
   const clearFilters = () => {
     updateFilter({
-      orderId: '', productId: '', productName: '',
-      startDate: daysAgo(30), endDate: daysAgo(0), status: ''
+      orderId: '', productId: '', productName: '', customerName: '',
+      startDate: daysAgo(30), endDate: daysAgo(0), status: []
     })
   }
 
   const hasFilters = filters.orderId !== '' || filters.productId !== '' || filters.productName !== ''
-    || filters.status !== ''
+    || filters.customerName !== ''
+    || filters.status.length > 0
     || filters.startDate !== daysAgo(30) || filters.endDate !== daysAgo(0)
 
   return (
@@ -361,22 +364,21 @@ const Orders = () => {
           <input placeholder="Search name…" value={filters.productName}
             onChange={(e) => updateFilter({ productName: e.target.value })} />
         </div>
+        <div className="field field-search">
+          <label>Customer name</label>
+          <input placeholder="Search customer…" value={filters.customerName}
+            onChange={(e) => updateFilter({ customerName: e.target.value })} />
+        </div>
         <DateRangePicker
           start={filters.startDate}
           end={filters.endDate}
           max={daysAgo(0)}
           onChange={handleRangeChange}
         />
-        <div className="field field-filter">
-          <label>Status</label>
-          <select value={filters.status} onChange={(e) => updateFilter({ status: e.target.value })}>
-            <option value="">All</option>
-            <option value="PAID">Paid</option>
-            <option value="NOT_PAID">Not paid</option>
-            <option value="PARTIALLY_PAID">Partially Paid</option>
-            <option value="CANCELLED">Cancelled</option>
-          </select>
-        </div>
+        <StatusMultiSelect
+          value={filters.status}
+          onChange={(status) => updateFilter({ status })}
+        />
         {hasFilters && (
           <button className="btn btn-ghost" onClick={clearFilters}>Clear</button>
         )}

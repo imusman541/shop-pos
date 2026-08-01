@@ -988,11 +988,14 @@ tbody tr.row-selected:hover {
   width: 100%;
 }
 
-.orders-toolbar .field-filter {
-  flex: 0 0 150px;
+.orders-toolbar .field-filter,
+.orders-toolbar .multi-select-field.field-filter {
+  flex: 0 0 180px;
+  min-width: 160px;
 }
 
-.orders-toolbar .field-filter select {
+.orders-toolbar .field-filter select,
+.orders-toolbar .multi-select-field.field-filter .multi-select-trigger {
   width: 100%;
 }
 

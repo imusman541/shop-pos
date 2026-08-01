@@ -978,12 +978,20 @@ const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items }) 
   }
 }
 
+const normalizeOrderStatuses = (filters = {}) => {
+  const raw = filters.status
+  if (raw == null || raw === '') return []
+  const list = Array.isArray(raw) ? raw : String(raw).split(',')
+  return [...new Set(list.map((s) => String(s).trim()).filter(Boolean))]
+}
+
 const getOrders = (filters = {}) => {
   const page = Math.max(1, num(filters.page, 1))
   const pageSize = Math.max(1, num(filters.pageSize, 25))
 
   const where = ['o.isArchive = 0']
   const params = {}
+  const fromSql = 'FROM orders o LEFT JOIN customers c ON c.id = o.customer_id'
 
   if (filters.orderId) {
     where.push('o.id = @orderId')
@@ -997,9 +1005,15 @@ const getOrders = (filters = {}) => {
     where.push(`EXISTS (SELECT 1 FROM order_items i WHERE i.order_id = o.id AND i.product_name LIKE @productName)`)
     params.productName = `%${filters.productName}%`
   }
-  if (filters.status) {
-    where.push('o.status = @status')
-    params.status = filters.status
+  if (filters.customerName) {
+    where.push('c.name LIKE @customerName')
+    params.customerName = `%${String(filters.customerName).trim()}%`
+  }
+  const statuses = normalizeOrderStatuses(filters)
+  if (statuses.length) {
+    const placeholders = statuses.map((_, idx) => `@status${idx}`).join(', ')
+    where.push(`o.status IN (${placeholders})`)
+    statuses.forEach((status, idx) => { params[`status${idx}`] = status })
   }
   if (filters.startDate) {
     where.push('date(o.created_at) >= date(@startDate)')
@@ -1011,12 +1025,11 @@ const getOrders = (filters = {}) => {
   }
 
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : ''
-  const total = db.prepare(`SELECT COUNT(*) AS c FROM orders o ${whereSql}`).get(params).c
+  const total = db.prepare(`SELECT COUNT(*) AS c ${fromSql} ${whereSql}`).get(params).c
   const orders = db
     .prepare(
       `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, c.name AS customer_name
-       FROM orders o
-       LEFT JOIN customers c ON c.id = o.customer_id
+       ${fromSql}
        ${whereSql}
        ORDER BY o.id DESC
        LIMIT @limit OFFSET @offset`
