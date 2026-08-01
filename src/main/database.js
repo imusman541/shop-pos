@@ -918,14 +918,41 @@ const deleteCustomerLedgerEntries = ({ id, entryIds = [] }) => {
 }
 
 const receiveCustomerPayment = ({ id, data }) => {
-  return addLedgerEntry({
-    customer_id: id,
-    type: 'credit',
-    amount: data.amount,
-    description: data.description || 'Payment received',
-    method: data.method || 'Cash',
-    created_at: data.created_at || nowISO()
-  })
+  const paymentAt = data.created_at || nowISO()
+  const amount = num(data.amount)
+  const method = data.method || 'Cash'
+  const description = data.description || 'Payment received'
+
+  return db.transaction(() => {
+    const allocation = allocateCustomerPaymentToOrders(id, amount, { paymentAt, method })
+    const remainder = allocation.remainder
+
+    let entry = null
+    if (remainder > PAYMENT_EPS) {
+      entry = addLedgerEntry({
+        customer_id: id,
+        type: 'credit',
+        amount: remainder,
+        description,
+        method,
+        created_at: paymentAt
+      })
+    } else if (allocation.ordersUpdated.length === 0) {
+      entry = addLedgerEntry({
+        customer_id: id,
+        type: 'credit',
+        amount,
+        description,
+        method,
+        created_at: paymentAt
+      })
+    }
+
+    return {
+      ...(entry || {}),
+      allocation
+    }
+  })()
 }
 
 const addCustomerCharge = ({ id, data }) => {
@@ -950,7 +977,7 @@ const addCustomerPayable = ({ id, data }) => {
   })
 }
 
-const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items }) => {
+const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items, method = 'Cash' }) => {
   db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(orderId)
   if (!isActiveOrderStatus(status) || !customerId) return
 
@@ -973,8 +1000,74 @@ const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items }) 
       type: 'credit',
       amount: paid,
       description: `Payment for order #${orderId}`,
-      method: 'Cash'
+      method
     })
+  }
+}
+
+const getUnpaidOrdersForCustomer = (customerId) => {
+  return db
+    .prepare(
+      `SELECT o.id, o.paid_amount, o.status, o.customer_id, o.created_at
+       FROM orders o
+       WHERE o.customer_id = @customerId
+         AND o.isArchive = 0
+         AND o.status IN ('NOT_PAID', 'PARTIALLY_PAID')
+       ORDER BY datetime(o.created_at) ASC, o.id ASC`
+    )
+    .all({ customerId })
+}
+
+const applyKhataPaymentToOrder = (orderId, payUpTo, paymentAt, method = 'Cash') => {
+  const order = db.prepare('SELECT id, status, customer_id, paid_amount FROM orders WHERE id = ?').get(orderId)
+  if (!order || order.status === 'CANCELLED') return 0
+
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(orderId).map(mapOrderItem)
+  const orderTotal = items.reduce((sum, item) => sum + num(item.total_price), 0)
+  const currentPaid = num(order.paid_amount)
+  const remainingDue = Math.max(0, orderTotal - currentPaid)
+  if (remainingDue <= PAYMENT_EPS || payUpTo <= PAYMENT_EPS) return 0
+
+  const applied = Math.min(payUpTo, remainingDue)
+  const newPaid = currentPaid + applied
+  const newStatus = resolveOrderStatus(order.status, newPaid, orderTotal)
+
+  db.prepare('UPDATE orders SET paid_amount = @paid_amount, status = @status WHERE id = @id').run({
+    id: orderId,
+    paid_amount: newPaid,
+    status: newStatus
+  })
+  syncOrderPayments(orderId, newPaid, { paymentAt })
+  replaceOrderLedger({
+    orderId,
+    customerId: order.customer_id,
+    status: newStatus,
+    paidAmount: newPaid,
+    items,
+    method
+  })
+
+  return applied
+}
+
+/** Apply a khata payment to oldest unpaid/partial orders first (FIFO). */
+const allocateCustomerPaymentToOrders = (customerId, amount, { paymentAt = nowISO(), method = 'Cash' } = {}) => {
+  let pool = Math.max(0, num(amount))
+  const ordersUpdated = []
+
+  for (const order of getUnpaidOrdersForCustomer(customerId)) {
+    if (pool <= PAYMENT_EPS) break
+    const applied = applyKhataPaymentToOrder(order.id, pool, paymentAt, method)
+    if (applied > PAYMENT_EPS) {
+      pool -= applied
+      ordersUpdated.push({ orderId: order.id, applied })
+    }
+  }
+
+  return {
+    allocated: num(amount) - pool,
+    remainder: pool,
+    ordersUpdated
   }
 }
 

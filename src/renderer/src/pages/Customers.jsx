@@ -188,9 +188,14 @@ const Customers = () => {
 
     try {
       if (type === 'payment') {
-        await window.api.receiveCustomerPayment(viewing.id, source)
+        const res = await window.api.receiveCustomerPayment(viewing.id, source)
         setPayment(EMPTY_ENTRY)
-        toast('Payment recorded')
+        const n = res?.allocation?.ordersUpdated?.length || 0
+        if (n > 0) {
+          toast(`Payment recorded · ${n} order${n === 1 ? '' : 's'} updated (oldest first)`)
+        } else {
+          toast('Payment recorded')
+        }
       } else if (type === 'payable') {
         await window.api.addCustomerPayable(viewing.id, source)
         setPayable({ ...EMPTY_ENTRY, method: '' })
