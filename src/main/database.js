@@ -6,8 +6,57 @@ import { app, BrowserWindow, clipboard, dialog, shell } from 'electron'
 
 let db
 
-const nowISO = () => {
-  return new Date().toISOString()
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/** Local wall-clock timestamp (no UTC Z suffix) for business dates/times. */
+const nowLocalISO = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
+}
+
+/** Backward-compatible alias — all new timestamps use local time. */
+const nowISO = () => nowLocalISO()
+
+const utcToLocalISO = (iso) => {
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`
+}
+
+/** yyyy-mm-dd in the machine's local timezone (for filters, dashboard grouping, display). */
+const localDateKey = (iso) => {
+  if (!iso) return ''
+  const s = String(iso)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s.slice(0, 10)
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
+}
+
+const migrateTimestampsToLocal = () => {
+  const tables = [
+    ['orders', 'created_at'],
+    ['order_payments', 'created_at'],
+    ['products', 'created_at'],
+    ['customers', 'created_at'],
+    ['customer_ledger', 'created_at'],
+    ['expenses', 'created_at'],
+    ['expense_wallet_ledger', 'created_at'],
+    ['app_user', 'created_at']
+  ]
+
+  db.transaction(() => {
+    for (const [table, col] of tables) {
+      const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name)
+      if (!cols.includes(col)) continue
+      const rows = db.prepare(`SELECT id, ${col} AS v FROM ${table} WHERE ${col} LIKE '%Z'`).all()
+      if (!rows.length) continue
+      const upd = db.prepare(`UPDATE ${table} SET ${col} = ? WHERE id = ?`)
+      for (const row of rows) {
+        upd.run(utcToLocalISO(row.v), row.id)
+      }
+    }
+  })()
 }
 
 const num = (v, fallback = 0) => {
@@ -152,6 +201,7 @@ const init = () => {
   migrateOrderCustomerFields()
   migrateOrderItemsSchema()
   migrateOrderPayments()
+  migrateTimestampsToLocal()
   migrateCustomerLedgerTypes()
   migrateProductsSchema()
   migrateExpenseAmountColumn()
@@ -262,7 +312,12 @@ const getProducts = (filters = {}) => {
   return { rows, total, page, pageSize }
 }
 
+const resolveProductStatus = (quantity) => {
+  return num(quantity) > 0 ? 'in_stock' : 'out_of_stock'
+}
+
 const createProduct = (data) => {
+  const quantity = num(data.quantity)
   const info = db
     .prepare(
       `INSERT INTO products (name, image, quantity, cost, status, created_at)
@@ -271,15 +326,16 @@ const createProduct = (data) => {
     .run({
       name: data.name || 'Unnamed product',
       image: data.image || null,
-      quantity: num(data.quantity),
+      quantity,
       cost: num(data.cost),
-      status: data.status === 'out_of_stock' ? 'out_of_stock' : 'in_stock',
+      status: resolveProductStatus(quantity),
       created_at: nowISO()
     })
   return getProductById(info.lastInsertRowid)
 }
 
 const updateProduct = ({ id, data }) => {
+  const quantity = num(data.quantity)
   db.prepare(
     `UPDATE products
      SET name = @name, image = @image, quantity = @quantity,
@@ -289,9 +345,9 @@ const updateProduct = ({ id, data }) => {
     id,
     name: data.name || 'Unnamed product',
     image: data.image || null,
-    quantity: num(data.quantity),
+    quantity,
     cost: num(data.cost),
-    status: data.status === 'out_of_stock' ? 'out_of_stock' : 'in_stock'
+    status: resolveProductStatus(quantity)
   })
   return getProductById(id)
 }
@@ -1109,11 +1165,11 @@ const getOrders = (filters = {}) => {
     statuses.forEach((status, idx) => { params[`status${idx}`] = status })
   }
   if (filters.startDate) {
-    where.push('date(o.created_at) >= date(@startDate)')
+    where.push('substr(o.created_at, 1, 10) >= @startDate')
     params.startDate = filters.startDate
   }
   if (filters.endDate) {
-    where.push('date(o.created_at) <= date(@endDate)')
+    where.push('substr(o.created_at, 1, 10) <= @endDate')
     params.endDate = filters.endDate
   }
 
@@ -1328,7 +1384,7 @@ const allocateOrderPaymentMetrics = (items, payments, productIds = []) => {
     const profitPart = amount - costPart
     remainingCost -= costPart
     return {
-      date: String(payment.created_at || '').slice(0, 10),
+      date: localDateKey(payment.created_at),
       sales: amount,
       profit: profitPart,
       items: orderTotal > 0 ? filteredQty * (num(payment.amount) / orderTotal) : 0
@@ -1640,13 +1696,13 @@ const importProducts = async () => {
     for (const r of items) {
       const name = pick(r, ['name', 'Name', 'product_name', 'Product Name'])
       if (!name) continue
-      const rawStatus = String(pick(r, ['status', 'Status']) || 'in_stock').toLowerCase()
+      const quantity = num(pick(r, ['quantity', 'Quantity', 'qty', 'Qty']))
       insert.run({
         name: String(name),
         image: null,
-        quantity: num(pick(r, ['quantity', 'Quantity', 'qty', 'Qty'])),
+        quantity,
         cost: num(pick(r, ['cost', 'Cost', 'net_price', 'net price', 'Net Price', 'price', 'Price'])),
-        status: rawStatus.includes('out') ? 'out_of_stock' : 'in_stock',
+        status: resolveProductStatus(quantity),
         created_at: nowISO()
       })
       count++

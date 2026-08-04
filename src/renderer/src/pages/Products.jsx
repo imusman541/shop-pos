@@ -9,7 +9,16 @@ import {
 } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { name: '', image: null, quantity: '', cost: '', status: 'in_stock' }
+const EMPTY = { name: '', image: null, quantity: '', cost: '' }
+
+const productStatusFromQty = (quantity) => {
+  const qty = Number(quantity)
+  return Number.isFinite(qty) && qty > 0 ? 'in_stock' : 'out_of_stock'
+}
+
+const productStatusLabel = (status) => {
+  return status === 'in_stock' ? 'In Stock' : 'Out of Stock'
+}
 
 const Products = () => {
   const toast = useToast()
@@ -71,8 +80,7 @@ const Products = () => {
     setEditing(p)
     setForm({
       name: p.name, image: p.image,
-      quantity: p.quantity, cost: p.cost,
-      status: p.status
+      quantity: p.quantity, cost: p.cost
     })
     setModalOpen(true)
   }
@@ -318,16 +326,16 @@ const Products = () => {
 
             <div>
               <label>Quantity Available</label>
-              <input type="number" value={form.quantity}
+              <input type="number" min="0" value={form.quantity}
                 onChange={(e) => setForm((f) => ({ ...f, quantity: e.target.value }))} />
             </div>
 
             <div>
               <label>Status</label>
-              <select value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
-                <option value="in_stock">In Stock</option>
-                <option value="out_of_stock">Out of Stock</option>
-              </select>
+              <div className={`badge ${productStatusFromQty(form.quantity) === 'in_stock' ? 'in' : 'out'}`}>
+                {productStatusLabel(productStatusFromQty(form.quantity))}
+              </div>
+              <div className="field-hint">Updates automatically from quantity.</div>
             </div>
 
             <div>

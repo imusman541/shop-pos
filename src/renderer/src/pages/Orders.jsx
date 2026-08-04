@@ -98,12 +98,17 @@ const Orders = () => {
   const [saving, setSaving] = useState(false)
   const [selected, setSelected] = useState(() => new Set())
 
-  const load = useCallback(async () => {
+  const fetchOrders = useCallback(async (query) => {
     setLoading(true)
-    const res = await window.api.getOrders({ ...filters, page, pageSize: PAGE_SIZE })
+    const res = await window.api.getOrders({ pageSize: PAGE_SIZE, ...query })
     setData(res)
     setLoading(false)
-  }, [filters, page])
+    return res
+  }, [])
+
+  const load = useCallback(async () => {
+    await fetchOrders({ ...filters, page })
+  }, [filters, page, fetchOrders])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setSelected(new Set()) }, [page, filters])
@@ -280,12 +285,31 @@ const Orders = () => {
       if (editing) {
         await window.api.updateOrder(editing.id, payload)
         toast('Order updated')
+        setModalOpen(false)
+        await load()
       } else {
         const created = await window.api.createOrder(payload)
         toast(`Order created · #${created.id}`)
+        setModalOpen(false)
+
+        const today = daysAgo(0)
+        const nextEndDate = filters.endDate < today ? today : filters.endDate
+        const nextStartDate = filters.startDate > today ? today : filters.startDate
+        const nextFilters = {
+          ...filters,
+          startDate: nextStartDate,
+          endDate: nextEndDate
+        }
+
+        if (nextEndDate !== filters.endDate || nextStartDate !== filters.startDate) {
+          setFilters(nextFilters)
+        }
+        if (page !== 1) {
+          setPage(1)
+        }
+
+        await fetchOrders({ ...nextFilters, page: 1 })
       }
-      setModalOpen(false)
-      await load()
     } catch (err) {
       toast(err.message || 'Could not save order')
     } finally {
