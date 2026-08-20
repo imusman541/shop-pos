@@ -2,14 +2,17 @@ import React, { useEffect, useState, useCallback, useMemo } from 'react'
 import Drawer from '../components/Drawer'
 import DateRangePicker from '../components/DateRangePicker'
 import ProductMultiSelect from '../components/ProductMultiSelect'
+import CustomerSelect from '../components/CustomerSelect'
 import StatusMultiSelect from '../components/StatusMultiSelect'
 import Pagination from '../components/Pagination'
+import ProductThumb from '../components/ProductThumb'
 import { useToast } from '../components/Toast'
 import { money, int, fmtDate, daysAgo } from '../lib/format'
 import { IconPlus, IconExport, IconEdit, IconTrash, IconInfo } from '../components/icons'
 
 const PAGE_SIZE = 25
-const EMPTY = { status: 'PAID', customer_id: '', paid_amount: '', items: [] }
+const TABLE_COLS = 12
+const EMPTY = { status: 'PAID', customer_id: '', paid_amount: '', image: null, items: [] }
 
 const orderQty = (items) => {
   return items.reduce((s, i) => s + (Number(i.quantity) || 0), 0)
@@ -237,6 +240,7 @@ const Orders = () => {
       status: o.status,
       customer_id: o.customer_id || '',
       paid_amount: o.paid_amount ?? '',
+      image: o.image || null,
       items: o.items.map((i) => ({
         product_id: i.product_id,
         product_name: i.product_name,
@@ -246,6 +250,14 @@ const Orders = () => {
       }))
     })
     setModalOpen(true)
+  }
+
+  const onImage = (e) => {
+    const file = e.target.files && e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => setForm((f) => ({ ...f, image: reader.result }))
+    reader.readAsDataURL(file)
   }
 
   const save = async () => {
@@ -446,14 +458,15 @@ const Orders = () => {
                 <th className="sticky-col sticky-col-total">Total</th>
                 <th className="sticky-col sticky-col-profit">Profit</th>
                 <th className="sticky-col sticky-col-date">Date</th>
+                <th className="sticky-col sticky-col-image">Image</th>
                 <th className="sticky-col sticky-col-actions">Actions</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
-                <tr><td colSpan={11}><div className="empty-state"><span className="spinner" /></div></td></tr>
+                <tr><td colSpan={TABLE_COLS}><div className="empty-state"><span className="spinner" /></div></td></tr>
               ) : data.rows.length === 0 ? (
-                <tr><td colSpan={11}>
+                <tr><td colSpan={TABLE_COLS}>
                   <div className="empty-state">
                     <strong>No orders found</strong>
                     Create an order or adjust the filters.
@@ -496,6 +509,9 @@ const Orders = () => {
                     <td className="num sticky-col sticky-col-total"><strong>{money(orderTotal(o.items))}</strong></td>
                     <td className="num sticky-col sticky-col-profit"><strong>{money(orderProfit(o.items))}</strong></td>
                     <td className="col-date sticky-col sticky-col-date">{fmtDate(o.created_at)}</td>
+                    <td className="sticky-col sticky-col-image">
+                      <ProductThumb src={o.image} name={`Order #${o.id}`} />
+                    </td>
                     <td className="sticky-col sticky-col-actions">
                       <div className="row-actions">
                         <button className="btn btn-sm" onClick={() => openEdit(o)}><IconEdit /></button>
@@ -670,17 +686,11 @@ const Orders = () => {
           <div className="form-grid-two">
             <div>
               <label>Customer <span className="label-note">(optional)</span></label>
-              <select
+              <CustomerSelect
+                customers={customers}
                 value={form.customer_id}
-                onChange={(e) => setForm((f) => ({ ...f, customer_id: e.target.value }))}
-              >
-                <option value="">Walk-in customer</option>
-                {customers.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    #{c.id} {c.name}{c.phone ? ` · ${c.phone}` : ''}
-                  </option>
-                ))}
-              </select>
+                onChange={(customer_id) => setForm((f) => ({ ...f, customer_id }))}
+              />
             </div>
             <div>
               <label>
@@ -726,6 +736,28 @@ const Orders = () => {
             {form.status === 'PARTIALLY_PAID' && !(Number(form.paid_amount) > 0) && (
               <div className="field-hint">Enter a paid amount greater than 0 and less than the order total.</div>
             )}
+          </div>
+
+          <div>
+            <label>Picture <span className="label-note">(optional)</span></label>
+            <div className="img-picker">
+              {form.image
+                ? <img className="preview" src={form.image} alt="Order attachment" />
+                : <div className="preview">No image</div>}
+              <div>
+                <input type="file" accept="image/*" onChange={onImage} />
+                {form.image && (
+                  <button
+                    className="btn btn-sm btn-ghost"
+                    style={{ marginTop: 6 }}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, image: null }))}
+                  >
+                    Remove
+                  </button>
+                )}
+              </div>
+            </div>
           </div>
         </div>
       </Drawer>

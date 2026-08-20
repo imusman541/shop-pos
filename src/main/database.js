@@ -92,6 +92,16 @@ const ledgerTypeLabel = (type) => {
   return 'Paid'
 }
 
+const isReceivedCreditRow = (row) => (
+  row.type === 'credit'
+  && (row.credit_kind === 'received' || (!row.credit_kind && !row.order_id))
+)
+
+const isOrderCreditRow = (row) => (
+  row.type === 'credit'
+  && (row.credit_kind === 'order' || (!row.credit_kind && row.order_id))
+)
+
 /* ---------------------------------------------------------------- setup */
 
 const resolveDbPath = () => {
@@ -125,9 +135,10 @@ const init = () => {
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    NOT NULL,
       image       TEXT,
-      quantity    INTEGER NOT NULL DEFAULT 0,
+      quantity    REAL    NOT NULL DEFAULT 0,
       cost        REAL    NOT NULL DEFAULT 0,
       status      TEXT    NOT NULL DEFAULT 'in_stock',
+      unit_type   TEXT    NOT NULL DEFAULT 'quantity',
       created_at  TEXT    NOT NULL
     );
 
@@ -199,11 +210,14 @@ const init = () => {
   migrateOrdersSchema()
   migrateOrderArchive()
   migrateOrderCustomerFields()
+  migrateOrderImage()
   migrateOrderItemsSchema()
   migrateOrderPayments()
   migrateTimestampsToLocal()
   migrateCustomerLedgerTypes()
+  migrateCustomerLedgerExtensions()
   migrateProductsSchema()
+  migrateProductsUnitType()
   migrateExpenseAmountColumn()
   migrateAppUser()
   return dbPath
@@ -309,7 +323,7 @@ const getProducts = (filters = {}) => {
     .prepare(`SELECT * FROM products ${whereSql} ORDER BY id DESC LIMIT @limit OFFSET @offset`)
     .all({ ...params, limit: pageSize, offset: (page - 1) * pageSize })
 
-  return { rows, total, page, pageSize }
+  return { rows, total, page, pageSize, inventoryTotal: getProductsInventoryTotal() }
 }
 
 const resolveProductStatus = (quantity) => {
@@ -320,8 +334,8 @@ const createProduct = (data) => {
   const quantity = num(data.quantity)
   const info = db
     .prepare(
-      `INSERT INTO products (name, image, quantity, cost, status, created_at)
-       VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
+      `INSERT INTO products (name, image, quantity, cost, status, unit_type, created_at)
+       VALUES (@name, @image, @quantity, @cost, @status, @unit_type, @created_at)`
     )
     .run({
       name: data.name || 'Unnamed product',
@@ -329,6 +343,7 @@ const createProduct = (data) => {
       quantity,
       cost: num(data.cost),
       status: resolveProductStatus(quantity),
+      unit_type: normalizeUnitType(data.unit_type),
       created_at: nowISO()
     })
   return getProductById(info.lastInsertRowid)
@@ -339,7 +354,7 @@ const updateProduct = ({ id, data }) => {
   db.prepare(
     `UPDATE products
      SET name = @name, image = @image, quantity = @quantity,
-         cost = @cost, status = @status
+         cost = @cost, status = @status, unit_type = @unit_type
      WHERE id = @id`
   ).run({
     id,
@@ -347,9 +362,24 @@ const updateProduct = ({ id, data }) => {
     image: data.image || null,
     quantity,
     cost: num(data.cost),
-    status: resolveProductStatus(quantity)
+    status: resolveProductStatus(quantity),
+    unit_type: normalizeUnitType(data.unit_type)
   })
   return getProductById(id)
+}
+
+const increaseProductsCostByPercent = ({ ids, percent }) => {
+  const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
+  const pct = num(percent)
+  if (!list.length) return { ok: true, count: 0 }
+  if (!Number.isFinite(pct)) throw new Error('Invalid percentage value')
+
+  const factor = 1 + pct / 100
+  const placeholders = list.map(() => '?').join(', ')
+  const result = db.prepare(
+    `UPDATE products SET cost = ROUND(cost * ?, 4) WHERE id IN (${placeholders})`
+  ).run(factor, ...list)
+  return { ok: true, count: result.changes }
 }
 
 const deleteProduct = (id) => {
@@ -448,6 +478,13 @@ const migrateOrderCustomerFields = () => {
   }
   if (!cols.includes('paid_amount')) {
     db.exec('ALTER TABLE orders ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0')
+  }
+}
+
+const migrateOrderImage = () => {
+  const cols = db.prepare('PRAGMA table_info(orders)').all().map((c) => c.name)
+  if (!cols.includes('image')) {
+    db.exec('ALTER TABLE orders ADD COLUMN image TEXT')
   }
 }
 
@@ -629,6 +666,47 @@ const migrateCustomerLedgerTypes = () => {
   `)
 }
 
+const migrateCustomerLedgerExtensions = () => {
+  const cols = db.prepare('PRAGMA table_info(customer_ledger)').all().map((c) => c.name)
+  if (!cols.includes('debit_kind')) {
+    db.exec('ALTER TABLE customer_ledger ADD COLUMN debit_kind TEXT')
+    db.exec("UPDATE customer_ledger SET debit_kind = 'order' WHERE order_id IS NOT NULL AND type = 'debit'")
+    db.exec("UPDATE customer_ledger SET debit_kind = 'non_sale' WHERE order_id IS NULL AND type = 'debit'")
+  }
+  if (!cols.includes('dashboard_sales')) {
+    db.exec('ALTER TABLE customer_ledger ADD COLUMN dashboard_sales REAL NOT NULL DEFAULT 0')
+  }
+  if (!cols.includes('credit_kind')) {
+    db.exec('ALTER TABLE customer_ledger ADD COLUMN credit_kind TEXT')
+    db.exec("UPDATE customer_ledger SET credit_kind = 'order' WHERE type = 'credit' AND order_id IS NOT NULL")
+    db.exec("UPDATE customer_ledger SET credit_kind = 'received' WHERE type = 'credit' AND order_id IS NULL")
+  }
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS ledger_allocations (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      credit_id   INTEGER NOT NULL,
+      debit_id    INTEGER NOT NULL,
+      amount      REAL    NOT NULL DEFAULT 0,
+      created_at  TEXT    NOT NULL,
+      FOREIGN KEY (credit_id) REFERENCES customer_ledger(id) ON DELETE CASCADE,
+      FOREIGN KEY (debit_id) REFERENCES customer_ledger(id) ON DELETE CASCADE
+    );
+  `)
+}
+
+const resolveDebitKind = ({ type, order_id, debit_kind }) => {
+  if (type !== 'debit') return null
+  if (order_id) return 'order'
+  return debit_kind || 'non_sale'
+}
+
+const resolveCreditKind = ({ type, order_id, credit_kind }) => {
+  if (type !== 'credit') return null
+  if (credit_kind) return credit_kind
+  if (order_id) return 'order'
+  return 'received'
+}
+
 const migrateProductsSchema = () => {
   const cols = db.prepare('PRAGMA table_info(products)').all().map((c) => c.name)
   if (!cols.length) return
@@ -645,16 +723,66 @@ const migrateProductsSchema = () => {
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    NOT NULL,
       image       TEXT,
-      quantity    INTEGER NOT NULL DEFAULT 0,
+      quantity    REAL    NOT NULL DEFAULT 0,
       cost        REAL    NOT NULL DEFAULT 0,
       status      TEXT    NOT NULL DEFAULT 'in_stock',
+      unit_type   TEXT    NOT NULL DEFAULT 'quantity',
       created_at  TEXT    NOT NULL
     );
-    INSERT INTO products_new (id, name, image, quantity, cost, status, created_at)
-    SELECT id, name, image, quantity, ${costSource}, status, created_at FROM products;
+    INSERT INTO products_new (id, name, image, quantity, cost, status, unit_type, created_at)
+    SELECT id, name, image, quantity, ${costSource}, status, 'quantity', created_at FROM products;
     DROP TABLE products;
     ALTER TABLE products_new RENAME TO products;
   `)
+}
+
+const migrateProductsUnitType = () => {
+  const cols = db.prepare('PRAGMA table_info(products)').all()
+  const colNames = cols.map((c) => c.name)
+  if (!colNames.length) return
+
+  const quantityCol = cols.find((c) => c.name === 'quantity')
+  const needsUnitType = !colNames.includes('unit_type')
+  const needsRealQty = quantityCol && quantityCol.type.toUpperCase().includes('INT')
+
+  if (!needsUnitType && !needsRealQty) return
+
+  if (needsUnitType && !needsRealQty) {
+    db.exec("ALTER TABLE products ADD COLUMN unit_type TEXT NOT NULL DEFAULT 'quantity'")
+    return
+  }
+
+  const unitTypeSelect = colNames.includes('unit_type') ? 'unit_type' : "'quantity'"
+  db.exec(`
+    CREATE TABLE products_new (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      image       TEXT,
+      quantity    REAL    NOT NULL DEFAULT 0,
+      cost        REAL    NOT NULL DEFAULT 0,
+      status      TEXT    NOT NULL DEFAULT 'in_stock',
+      unit_type   TEXT    NOT NULL DEFAULT 'quantity',
+      created_at  TEXT    NOT NULL
+    );
+    INSERT INTO products_new (id, name, image, quantity, cost, status, unit_type, created_at)
+    SELECT id, name, image, quantity, cost, status, ${unitTypeSelect}, created_at FROM products;
+    DROP TABLE products;
+    ALTER TABLE products_new RENAME TO products;
+  `)
+}
+
+const PRODUCT_UNIT_TYPES = ['quantity', 'weight', 'gaz']
+
+const normalizeUnitType = (value) => {
+  const unitType = String(value || 'quantity').toLowerCase()
+  return PRODUCT_UNIT_TYPES.includes(unitType) ? unitType : 'quantity'
+}
+
+const productStockValue = (product) => num(product?.cost) * num(product?.quantity)
+
+const getProductsInventoryTotal = () => {
+  const row = db.prepare('SELECT COALESCE(SUM(cost * quantity), 0) AS total FROM products').get()
+  return num(row?.total)
 }
 
 const inventoryTotals = (items) => {
@@ -766,7 +894,7 @@ const attachItems = (order) => {
 const getOrderById = (id) => {
   const order = db
     .prepare(
-      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, c.name AS customer_name
+      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, o.image, c.name AS customer_name
        FROM orders o
        LEFT JOIN customers c ON c.id = o.customer_id
        WHERE o.id = ?`
@@ -869,24 +997,51 @@ const withComputedCustomerBalance = (customer) => {
   }
 }
 
-const getCustomerKhata = (id) => {
+const getCustomerKhata = (id, filters = {}) => {
   const customer = getCustomerSummary(id)
   if (!customer) return null
-  const rows = db
-    .prepare('SELECT * FROM customer_ledger WHERE customer_id = ? ORDER BY datetime(created_at), id')
+  const startDate = filters.startDate || ''
+  const endDate = filters.endDate || ''
+  const allRows = db
+    .prepare(
+      `SELECT l.*, o.image AS order_image
+       FROM customer_ledger l
+       LEFT JOIN orders o ON o.id = l.order_id
+       WHERE l.customer_id = ?
+       ORDER BY datetime(l.created_at), l.id`
+    )
     .all(id)
-  return { customer, rows: ledgerWithRunningBalance(rows) }
+  const balanced = ledgerWithRunningBalance(allRows)
+  const rows = balanced.filter((row) => {
+    const dateKey = localDateKey(row.created_at)
+    if (startDate && dateKey < startDate) return false
+    if (endDate && dateKey > endDate) return false
+    return true
+  })
+  return { customer, rows, startDate, endDate }
 }
 
-const addLedgerEntry = ({ customer_id, order_id = null, type, amount, description = '', method = '', created_at = nowISO() }) => {
+const addLedgerEntry = ({
+  customer_id,
+  order_id = null,
+  type,
+  amount,
+  description = '',
+  method = '',
+  created_at = nowISO(),
+  debit_kind = null,
+  credit_kind = null,
+  dashboard_sales = 0
+}) => {
   const value = num(amount)
   if (!customer_id) throw new Error('Select a customer')
   if (!['debit', 'credit', 'payable'].includes(type)) throw new Error('Invalid ledger entry type')
   if (value <= 0) throw new Error('Amount must be greater than 0')
 
   const info = db.prepare(
-    `INSERT INTO customer_ledger (customer_id, order_id, type, amount, description, method, created_at)
-     VALUES (@customer_id, @order_id, @type, @amount, @description, @method, @created_at)`
+    `INSERT INTO customer_ledger
+     (customer_id, order_id, type, amount, description, method, created_at, debit_kind, credit_kind, dashboard_sales)
+     VALUES (@customer_id, @order_id, @type, @amount, @description, @method, @created_at, @debit_kind, @credit_kind, @dashboard_sales)`
   ).run({
     customer_id,
     order_id,
@@ -894,7 +1049,10 @@ const addLedgerEntry = ({ customer_id, order_id = null, type, amount, descriptio
     amount: value,
     description,
     method,
-    created_at
+    created_at,
+    debit_kind: resolveDebitKind({ type, order_id, debit_kind }),
+    credit_kind: resolveCreditKind({ type, order_id, credit_kind }),
+    dashboard_sales: Math.max(0, num(dashboard_sales))
   })
   return db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(info.lastInsertRowid)
 }
@@ -921,7 +1079,8 @@ const createCustomer = (data) => {
       customer_id: id,
       type: 'debit',
       amount: opening,
-      description: 'Opening balance'
+      description: 'Opening balance',
+      debit_kind: 'non_sale'
     })
   }
   return getCustomerSummary(id)
@@ -973,40 +1132,224 @@ const deleteCustomerLedgerEntries = ({ id, entryIds = [] }) => {
   return { ok: true, count: result.changes }
 }
 
+const getSettledDebitAmount = (debitId) => {
+  const row = db
+    .prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM ledger_allocations WHERE debit_id = ?')
+    .get(debitId)
+  return num(row?.total)
+}
+
+const planNonSaleDebitAllocation = (customerId, pool) => {
+  let remainingPool = Math.max(0, num(pool))
+  if (remainingPool <= PAYMENT_EPS) {
+    return { allocated: 0, remainder: remainingPool, debitsSettled: [] }
+  }
+
+  const debits = db
+    .prepare(
+      `SELECT id, amount
+       FROM customer_ledger
+       WHERE customer_id = @customerId
+         AND type = 'debit'
+         AND order_id IS NULL
+         AND COALESCE(debit_kind, 'non_sale') = 'non_sale'
+       ORDER BY datetime(created_at), id`
+    )
+    .all({ customerId })
+
+  let allocated = 0
+  const debitsSettled = []
+
+  for (const debit of debits) {
+    if (remainingPool <= PAYMENT_EPS) break
+    const openAmount = num(debit.amount) - getSettledDebitAmount(debit.id)
+    if (openAmount <= PAYMENT_EPS) continue
+    const applied = Math.min(remainingPool, openAmount)
+    debitsSettled.push({ debitId: debit.id, amount: applied })
+    allocated += applied
+    remainingPool -= applied
+  }
+
+  return { allocated, remainder: remainingPool, debitsSettled }
+}
+
+const recordLedgerAllocations = (creditId, debitsSettled, created_at = nowISO()) => {
+  if (!creditId || !debitsSettled?.length) return
+  const insert = db.prepare(
+    `INSERT INTO ledger_allocations (credit_id, debit_id, amount, created_at)
+     VALUES (@credit_id, @debit_id, @amount, @created_at)`
+  )
+  for (const item of debitsSettled) {
+    insert.run({
+      credit_id: creditId,
+      debit_id: item.debitId,
+      amount: num(item.amount),
+      created_at
+    })
+  }
+}
+
+const recordNonSaleAllocations = (creditId, debitsSettled, created_at = nowISO()) => {
+  recordLedgerAllocations(creditId, debitsSettled, created_at)
+}
+
+const applyOrderPaymentUpdate = (orderId, applied, paymentAt) => {
+  const appliedAmount = Math.max(0, num(applied))
+  if (appliedAmount <= PAYMENT_EPS) return 0
+
+  const order = db.prepare('SELECT id, status, customer_id, paid_amount FROM orders WHERE id = ?').get(orderId)
+  if (!order || order.status === 'CANCELLED') return 0
+
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(orderId).map(mapOrderItem)
+  const orderTotal = items.reduce((sum, item) => sum + num(item.total_price), 0)
+  const newPaid = Math.min(orderTotal, num(order.paid_amount) + appliedAmount)
+  const newStatus = resolveOrderStatus(order.status, newPaid, orderTotal)
+
+  db.prepare('UPDATE orders SET paid_amount = @paid_amount, status = @status WHERE id = @id').run({
+    id: orderId,
+    paid_amount: newPaid,
+    status: newStatus
+  })
+  insertOrderPayment(orderId, appliedAmount, paymentAt)
+  return appliedAmount
+}
+
+const ensureOrderLedgerDebit = (customerId, order) => {
+  const existing = db
+    .prepare(
+      `SELECT id, amount
+       FROM customer_ledger
+       WHERE customer_id = @customerId
+         AND order_id = @orderId
+         AND type = 'debit'
+       ORDER BY id
+       LIMIT 1`
+    )
+    .get({ customerId, orderId: order.id })
+  if (existing) return existing
+
+  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id).map(mapOrderItem)
+  replaceOrderLedger({
+    orderId: order.id,
+    customerId,
+    status: order.status,
+    paidAmount: num(order.paid_amount),
+    items,
+    method: ''
+  })
+  return db
+    .prepare(
+      `SELECT id, amount
+       FROM customer_ledger
+       WHERE customer_id = @customerId
+         AND order_id = @orderId
+         AND type = 'debit'
+       ORDER BY id
+       LIMIT 1`
+    )
+    .get({ customerId, orderId: order.id })
+}
+
+const planOrderDebitAllocation = (customerId, pool) => {
+  let remainingPool = Math.max(0, num(pool))
+  if (remainingPool <= PAYMENT_EPS) {
+    return { allocated: 0, remainder: remainingPool, debitsSettled: [], ordersUpdated: [] }
+  }
+
+  const debitsSettled = []
+  const ordersUpdated = []
+
+  for (const order of getUnpaidOrdersForCustomer(customerId)) {
+    if (remainingPool <= PAYMENT_EPS) break
+
+    const debit = ensureOrderLedgerDebit(customerId, order)
+    if (!debit) continue
+
+    const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(order.id).map(mapOrderItem)
+    const orderTotal = items.reduce((sum, item) => sum + num(item.total_price), 0)
+    const remainingDue = Math.max(0, orderTotal - num(order.paid_amount))
+    if (remainingDue <= PAYMENT_EPS) continue
+
+    const applied = Math.min(remainingPool, remainingDue)
+    debitsSettled.push({ debitId: debit.id, amount: applied })
+    ordersUpdated.push({ orderId: order.id, applied })
+    remainingPool -= applied
+  }
+
+  return {
+    allocated: num(pool) - remainingPool,
+    remainder: remainingPool,
+    debitsSettled,
+    ordersUpdated
+  }
+}
+
 const receiveCustomerPayment = ({ id, data }) => {
   const paymentAt = data.created_at || nowISO()
   const amount = num(data.amount)
   const method = data.method || 'Cash'
   const description = data.description || 'Payment received'
+  const paymentMode = data.paymentMode === 'non_orders' ? 'non_orders' : 'orders'
 
   return db.transaction(() => {
-    const allocation = allocateCustomerPaymentToOrders(id, amount, { paymentAt, method })
-    const remainder = allocation.remainder
+    const entry = addLedgerEntry({
+      customer_id: id,
+      type: 'credit',
+      amount,
+      description,
+      method,
+      created_at: paymentAt,
+      credit_kind: 'received'
+    })
 
-    let entry = null
-    if (remainder > PAYMENT_EPS) {
-      entry = addLedgerEntry({
-        customer_id: id,
-        type: 'credit',
-        amount: remainder,
-        description,
-        method,
-        created_at: paymentAt
-      })
-    } else if (allocation.ordersUpdated.length === 0) {
-      entry = addLedgerEntry({
-        customer_id: id,
-        type: 'credit',
-        amount,
-        description,
-        method,
-        created_at: paymentAt
-      })
+    if (paymentMode === 'non_orders') {
+      const nonSalePlan = planNonSaleDebitAllocation(id, amount)
+      recordLedgerAllocations(entry.id, nonSalePlan.debitsSettled, paymentAt)
+      if (amount > PAYMENT_EPS) {
+        db.prepare('UPDATE customer_ledger SET dashboard_sales = ? WHERE id = ?')
+          .run(amount, entry.id)
+        entry.dashboard_sales = amount
+      }
+
+      return {
+        ...entry,
+        allocation: {
+          allocated: 0,
+          remainder: nonSalePlan.remainder,
+          ordersUpdated: [],
+          nonSaleAllocated: nonSalePlan.allocated,
+          advance: nonSalePlan.remainder,
+          debitsSettled: nonSalePlan.debitsSettled.length,
+          paymentMode
+        }
+      }
+    }
+
+    const orderPlan = planOrderDebitAllocation(id, amount)
+    recordLedgerAllocations(entry.id, orderPlan.debitsSettled, paymentAt)
+    for (const item of orderPlan.ordersUpdated) {
+      applyOrderPaymentUpdate(item.orderId, item.applied, paymentAt)
+    }
+
+    const nonSalePlan = planNonSaleDebitAllocation(id, orderPlan.remainder)
+    recordLedgerAllocations(entry.id, nonSalePlan.debitsSettled, paymentAt)
+    if (nonSalePlan.allocated > PAYMENT_EPS) {
+      db.prepare('UPDATE customer_ledger SET dashboard_sales = ? WHERE id = ?')
+        .run(nonSalePlan.allocated, entry.id)
+      entry.dashboard_sales = nonSalePlan.allocated
     }
 
     return {
-      ...(entry || {}),
-      allocation
+      ...entry,
+      allocation: {
+        allocated: orderPlan.allocated,
+        remainder: nonSalePlan.remainder,
+        ordersUpdated: orderPlan.ordersUpdated,
+        nonSaleAllocated: nonSalePlan.allocated,
+        advance: nonSalePlan.remainder,
+        debitsSettled: orderPlan.debitsSettled.length + nonSalePlan.debitsSettled.length,
+        paymentMode
+      }
     }
   })()
 }
@@ -1018,7 +1361,8 @@ const addCustomerCharge = ({ id, data }) => {
     amount: data.amount,
     description: data.description || 'Manual khata entry',
     method: data.method || '',
-    created_at: data.created_at || nowISO()
+    created_at: data.created_at || nowISO(),
+    debit_kind: 'non_sale'
   })
 }
 
@@ -1056,7 +1400,8 @@ const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items, me
       type: 'credit',
       amount: paid,
       description: `Payment for order #${orderId}`,
-      method
+      method,
+      credit_kind: 'order'
     })
   }
 }
@@ -1064,67 +1409,16 @@ const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items, me
 const getUnpaidOrdersForCustomer = (customerId) => {
   return db
     .prepare(
-      `SELECT o.id, o.paid_amount, o.status, o.customer_id, o.created_at
+      `SELECT o.id, o.paid_amount, o.status, o.customer_id, o.created_at,
+              COALESCE((SELECT SUM(total_price) FROM order_items WHERE order_id = o.id), 0) AS order_total
        FROM orders o
        WHERE o.customer_id = @customerId
          AND o.isArchive = 0
-         AND o.status IN ('NOT_PAID', 'PARTIALLY_PAID')
+         AND o.status != 'CANCELLED'
        ORDER BY datetime(o.created_at) ASC, o.id ASC`
     )
     .all({ customerId })
-}
-
-const applyKhataPaymentToOrder = (orderId, payUpTo, paymentAt, method = 'Cash') => {
-  const order = db.prepare('SELECT id, status, customer_id, paid_amount FROM orders WHERE id = ?').get(orderId)
-  if (!order || order.status === 'CANCELLED') return 0
-
-  const items = db.prepare('SELECT * FROM order_items WHERE order_id = ?').all(orderId).map(mapOrderItem)
-  const orderTotal = items.reduce((sum, item) => sum + num(item.total_price), 0)
-  const currentPaid = num(order.paid_amount)
-  const remainingDue = Math.max(0, orderTotal - currentPaid)
-  if (remainingDue <= PAYMENT_EPS || payUpTo <= PAYMENT_EPS) return 0
-
-  const applied = Math.min(payUpTo, remainingDue)
-  const newPaid = currentPaid + applied
-  const newStatus = resolveOrderStatus(order.status, newPaid, orderTotal)
-
-  db.prepare('UPDATE orders SET paid_amount = @paid_amount, status = @status WHERE id = @id').run({
-    id: orderId,
-    paid_amount: newPaid,
-    status: newStatus
-  })
-  syncOrderPayments(orderId, newPaid, { paymentAt })
-  replaceOrderLedger({
-    orderId,
-    customerId: order.customer_id,
-    status: newStatus,
-    paidAmount: newPaid,
-    items,
-    method
-  })
-
-  return applied
-}
-
-/** Apply a khata payment to oldest unpaid/partial orders first (FIFO). */
-const allocateCustomerPaymentToOrders = (customerId, amount, { paymentAt = nowISO(), method = 'Cash' } = {}) => {
-  let pool = Math.max(0, num(amount))
-  const ordersUpdated = []
-
-  for (const order of getUnpaidOrdersForCustomer(customerId)) {
-    if (pool <= PAYMENT_EPS) break
-    const applied = applyKhataPaymentToOrder(order.id, pool, paymentAt, method)
-    if (applied > PAYMENT_EPS) {
-      pool -= applied
-      ordersUpdated.push({ orderId: order.id, applied })
-    }
-  }
-
-  return {
-    allocated: num(amount) - pool,
-    remainder: pool,
-    ordersUpdated
-  }
+    .filter((order) => num(order.paid_amount) + PAYMENT_EPS < num(order.order_total))
 }
 
 const normalizeOrderStatuses = (filters = {}) => {
@@ -1177,7 +1471,7 @@ const getOrders = (filters = {}) => {
   const total = db.prepare(`SELECT COUNT(*) AS c ${fromSql} ${whereSql}`).get(params).c
   const orders = db
     .prepare(
-      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, c.name AS customer_name
+      `SELECT o.id, o.status, o.created_at, o.customer_id, o.paid_amount, o.image, c.name AS customer_name
        ${fromSql}
        ${whereSql}
        ORDER BY o.id DESC
@@ -1195,14 +1489,15 @@ const createOrder = (data) => {
 
   const created_at = data.created_at || nowISO()
   const customer_id = data.customer_id ? num(data.customer_id) : null
+  const image = data.image || null
   const resolved = items.map((raw) => resolveItemPricing(raw))
   const orderTotal = resolved.reduce((sum, item) => sum + num(item.total_price), 0)
   const paid_amount = Math.min(Math.max(num(data.paid_amount), 0), orderTotal)
   const status = resolveOrderStatus(data.status, paid_amount, orderTotal)
 
   const insertOrder = db.prepare(
-    `INSERT INTO orders (status, created_at, isArchive, customer_id, paid_amount)
-     VALUES (@status, @created_at, 0, @customer_id, @paid_amount)`
+    `INSERT INTO orders (status, created_at, isArchive, customer_id, paid_amount, image)
+     VALUES (@status, @created_at, 0, @customer_id, @paid_amount, @image)`
   )
   const insertItem = db.prepare(
     `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
@@ -1210,7 +1505,7 @@ const createOrder = (data) => {
   )
 
   const orderId = db.transaction(() => {
-    const info = insertOrder.run({ status, created_at, customer_id, paid_amount })
+    const info = insertOrder.run({ status, created_at, customer_id, paid_amount, image })
     const id = info.lastInsertRowid
     for (const item of resolved) {
       insertItem.run({ order_id: id, ...item })
@@ -1229,6 +1524,7 @@ const updateOrder = ({ id, data }) => {
   if (!items.length) throw new Error('Order must include at least one product')
 
   const customer_id = data.customer_id ? num(data.customer_id) : null
+  const image = data.image || null
   const insertItem = db.prepare(
     `INSERT INTO order_items (order_id, product_id, product_name, quantity, total_price, unit_cost, profit)
      VALUES (@order_id, @product_id, @product_name, @quantity, @total_price, @unit_cost, @profit)`
@@ -1249,8 +1545,9 @@ const updateOrder = ({ id, data }) => {
     const paid_amount = Math.min(Math.max(num(data.paid_amount), 0), orderTotal)
     const status = resolveOrderStatus(data.status, paid_amount, orderTotal)
 
-    db.prepare('UPDATE orders SET status = @status, customer_id = @customer_id, paid_amount = @paid_amount WHERE id = @id')
-      .run({ id, status, customer_id, paid_amount })
+    db.prepare(
+      'UPDATE orders SET status = @status, customer_id = @customer_id, paid_amount = @paid_amount, image = @image WHERE id = @id'
+    ).run({ id, status, customer_id, paid_amount, image })
     db.prepare('DELETE FROM order_items WHERE order_id = ?').run(id)
 
     for (const item of resolved) {
@@ -1414,6 +1711,25 @@ const loadDashboardPaymentAllocations = (filters = {}) => {
     const payments = getPayments.all(order.id)
     allocations.push(...allocateOrderPaymentMetrics(items, payments, productIds))
   }
+
+  if (!productIds.length) {
+    const khataSales = db
+      .prepare(
+        `SELECT substr(created_at, 1, 10) AS date, dashboard_sales AS sales
+         FROM customer_ledger
+         WHERE type = 'credit' AND dashboard_sales > 0`
+      )
+      .all()
+    for (const row of khataSales) {
+      allocations.push({
+        date: row.date,
+        sales: num(row.sales),
+        profit: 0,
+        items: 0
+      })
+    }
+  }
+
   return allocations
 }
 
@@ -1480,7 +1796,7 @@ const getDashboard = (filters = {}) => {
 const exportProducts = async () => {
   const rows = db
     .prepare(
-      `SELECT id AS product_number, name, quantity, cost, status, created_at
+      `SELECT id AS product_number, name, quantity, cost, status, unit_type, created_at
        FROM products ORDER BY id`
     )
     .all()
@@ -1511,13 +1827,14 @@ const renderKhataPdf = (customer, rows) => {
         <td>${escapeHtml(formatPdfDate(row.created_at))}</td>
         <td><span class="badge ${row.type === 'debit' ? 'out' : row.type === 'payable' ? 'payable' : 'in'}">${escapeHtml(ledgerTypeLabel(row.type))}</span></td>
         <td>${escapeHtml(row.description || '-')}</td>
+        <td class="num">${isReceivedCreditRow(row) ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
         <td class="num">${row.type === 'debit' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
-        <td class="num">${row.type === 'credit' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
+        <td class="num">${isOrderCreditRow(row) ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
         <td class="num">${row.type === 'payable' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
         <td class="num strong">${escapeHtml(formatPdfMoney(row.running_balance))}</td>
       </tr>
     `).join('')
-    : '<tr><td colspan="7" class="empty">No khata entries selected.</td></tr>'
+    : '<tr><td colspan="8" class="empty">No khata entries selected.</td></tr>'
 
   return `<!doctype html>
 <html>
@@ -1556,6 +1873,7 @@ const renderKhataPdf = (customer, rows) => {
         <th>Date</th>
         <th>Type</th>
         <th>Description</th>
+        <th>Received</th>
         <th>Not Paid</th>
         <th>Paid</th>
         <th>To Pay</th>
@@ -1687,8 +2005,8 @@ const importProducts = async () => {
   }
 
   const insert = db.prepare(
-    `INSERT INTO products (name, image, quantity, cost, status, created_at)
-     VALUES (@name, @image, @quantity, @cost, @status, @created_at)`
+    `INSERT INTO products (name, image, quantity, cost, status, unit_type, created_at)
+     VALUES (@name, @image, @quantity, @cost, @status, @unit_type, @created_at)`
   )
 
   const tx = db.transaction((items) => {
@@ -1696,13 +2014,14 @@ const importProducts = async () => {
     for (const r of items) {
       const name = pick(r, ['name', 'Name', 'product_name', 'Product Name'])
       if (!name) continue
-      const quantity = num(pick(r, ['quantity', 'Quantity', 'qty', 'Qty']))
+      const quantity = num(pick(r, ['quantity', 'Quantity', 'qty', 'Qty', 'weight', 'Weight', 'gaz', 'Gaz']))
       insert.run({
         name: String(name),
         image: null,
         quantity,
         cost: num(pick(r, ['cost', 'Cost', 'net_price', 'net price', 'Net Price', 'price', 'Price'])),
         status: resolveProductStatus(quantity),
+        unit_type: normalizeUnitType(pick(r, ['unit_type', 'Unit Type', 'type', 'Type'])),
         created_at: nowISO()
       })
       count++
@@ -1889,8 +2208,10 @@ export {
   listProductsBrief,
   createProduct,
   updateProduct,
+  increaseProductsCostByPercent,
   deleteProduct,
   deleteProducts,
+  getProductsInventoryTotal,
   listCustomers,
   listCustomersBrief,
   getCustomerKhata,
