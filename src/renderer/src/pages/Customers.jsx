@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import Drawer from '../components/Drawer'
+import ProductThumb from '../components/ProductThumb'
 import Pagination from '../components/Pagination'
 import { useToast } from '../components/Toast'
 import { fmtDate, money } from '../lib/format'
@@ -7,7 +8,14 @@ import { IconEdit, IconExport, IconPlus, IconTrash } from '../components/icons'
 
 const PAGE_SIZE = 25
 const EMPTY_CUSTOMER = { name: '', phone: '', address: '', notes: '', opening_balance: '' }
-const EMPTY_ENTRY = { amount: '', method: '', description: '' }
+const EMPTY_ENTRY = { amount: '', method: '', description: '', paymentMode: 'orders' }
+const KHATA_STATUS_OPTIONS = [
+  { value: '', label: 'All statuses' },
+  { value: 'PAID', label: 'Paid' },
+  { value: 'NOT_PAID', label: 'Not paid' },
+  { value: 'PARTIALLY_PAID', label: 'Partially Paid' },
+  { value: 'CANCELLED', label: 'Cancelled' }
+]
 
 const Customers = () => {
   const toast = useToast()
@@ -24,6 +32,7 @@ const Customers = () => {
 
   const [viewing, setViewing] = useState(null)
   const [khata, setKhata] = useState(null)
+  const [khataStatus, setKhataStatus] = useState('')
   const [khataSelected, setKhataSelected] = useState(() => new Set())
   const [payment, setPayment] = useState(EMPTY_ENTRY)
   const [charge, setCharge] = useState({ ...EMPTY_ENTRY, method: '' })
@@ -36,15 +45,15 @@ const Customers = () => {
     setLoading(false)
   }, [filters, page])
 
-  const loadKhata = useCallback(async (customer) => {
+  const loadKhata = useCallback(async (customer, status = khataStatus) => {
     if (!customer) return
-    const res = await window.api.getCustomerKhata(customer.id)
+    const res = await window.api.getCustomerKhata(customer.id, { status })
     setKhata(res)
-  }, [])
+  }, [khataStatus])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { setSelected(new Set()) }, [page, filters])
-  useEffect(() => { setKhataSelected(new Set()) }, [viewing?.id])
+  useEffect(() => { setKhataSelected(new Set()) }, [viewing?.id, khataStatus])
 
   const updateFilter = (patch) => {
     setPage(1)
@@ -59,12 +68,65 @@ const Customers = () => {
   const allKhataSelected = khataEntryIds.length > 0 && khataEntryIds.every((id) => khataSelected.has(id))
   const someKhataSelected = khataEntryIds.some((id) => khataSelected.has(id))
   const selectedKhataIds = khataEntryIds.filter((id) => khataSelected.has(id))
-  const typeLabel = (type) => {
-    if (type === 'debit') return 'Not Paid'
-    if (type === 'payable') return 'To Pay'
+  const isReceivedCredit = (row) => (
+    row.type === 'credit'
+    && (row.credit_kind === 'received' || (!row.credit_kind && !row.order_id))
+  )
+  const isOrderCredit = (row) => (
+    row.type === 'credit'
+    && (row.credit_kind === 'order' || (!row.credit_kind && row.order_id))
+  )
+  const normalizeOrderStatus = (status) => (status === 'DONE' ? 'PAID' : status)
+  const notPaidAmount = (row) => {
+    if (row.type !== 'debit') return null
+    if (row.order_id) {
+      const status = normalizeOrderStatus(row.order_status)
+      if (status === 'PAID' || status === 'CANCELLED') return null
+      if (status === 'PARTIALLY_PAID') {
+        const remaining = Math.max(0, (Number(row.amount) || 0) - (Number(row.order_paid_amount) || 0))
+        return remaining > 0.009 ? remaining : null
+      }
+      return Number(row.amount) || 0
+    }
+    return Number(row.amount) || 0
+  }
+  const paidAmount = (row) => {
+    if (isOrderCredit(row)) return Number(row.amount) || 0
+    if (row.type === 'debit' && row.order_id) {
+      const status = normalizeOrderStatus(row.order_status)
+      if (status === 'PAID') return Number(row.amount) || 0
+      if (status === 'PARTIALLY_PAID') {
+        const paid = Number(row.order_paid_amount) || 0
+        return paid > 0.009 ? paid : null
+      }
+    }
+    return null
+  }
+  const typeLabel = (row) => {
+    if (row.order_id) {
+      const status = normalizeOrderStatus(row.order_status)
+      if (status === 'PAID') return 'Paid'
+      if (status === 'NOT_PAID') return 'Not paid'
+      if (status === 'PARTIALLY_PAID') return 'Partially Paid'
+      if (status === 'CANCELLED') return 'Cancelled'
+    }
+    if (row.type === 'debit') return 'Not Paid'
+    if (row.type === 'payable') return 'To Pay'
+    if (isReceivedCredit(row)) return 'Received'
     return 'Paid'
   }
-  const typeClass = (type) => type === 'debit' ? 'out' : type === 'payable' ? 'payable' : 'in'
+  const typeClass = (row) => {
+    if (row.order_id) {
+      const status = normalizeOrderStatus(row.order_status)
+      if (status === 'PAID') return 'paid'
+      if (status === 'NOT_PAID') return 'unpaid'
+      if (status === 'PARTIALLY_PAID') return 'partial'
+      if (status === 'CANCELLED') return 'cancelled'
+    }
+    if (row.type === 'debit') return 'out'
+    if (row.type === 'payable') return 'payable'
+    return 'in'
+  }
   const balanceInfo = (value) => {
     const amount = Number(value) || 0
     if (amount > 0) return { label: 'Customer Owes', status: 'Customer Owes', badge: 'out', chip: 'owes', amount }
@@ -128,10 +190,16 @@ const Customers = () => {
 
   const openKhata = async (customer) => {
     setViewing(customer)
+    setKhataStatus('')
     setPayment(EMPTY_ENTRY)
     setCharge({ ...EMPTY_ENTRY, method: '' })
     setPayable({ ...EMPTY_ENTRY, method: '' })
-    await loadKhata(customer)
+    await loadKhata(customer, '')
+  }
+
+  const handleKhataStatusChange = (status) => {
+    setKhataStatus(status)
+    if (viewing) loadKhata(viewing, status)
   }
 
   const save = async () => {
@@ -189,12 +257,16 @@ const Customers = () => {
     try {
       if (type === 'payment') {
         const res = await window.api.receiveCustomerPayment(viewing.id, source)
-        setPayment(EMPTY_ENTRY)
-        const n = res?.allocation?.ordersUpdated?.length || 0
-        if (n > 0) {
-          toast(`Payment recorded · ${n} order${n === 1 ? '' : 's'} updated (oldest first)`)
+        setPayment({ ...EMPTY_ENTRY, paymentMode: 'orders' })
+        if (source.paymentMode === 'non_orders') {
+          toast(`Payment recorded · ${money(source.amount)} sales only · orders unchanged`)
         } else {
-          toast('Payment recorded')
+          const orderCount = res?.allocation?.ordersUpdated?.length || 0
+          const nonSale = res?.allocation?.nonSaleAllocated || 0
+          const parts = []
+          if (orderCount > 0) parts.push(`${orderCount} order${orderCount === 1 ? '' : 's'} paid (sales + profit)`)
+          if (nonSale > 0) parts.push(`${money(nonSale)} old balance (sales only)`)
+          toast(parts.length ? `Payment recorded · ${parts.join(' · ')}` : 'Payment recorded')
         }
       } else if (type === 'payable') {
         await window.api.addCustomerPayable(viewing.id, source)
@@ -205,7 +277,7 @@ const Customers = () => {
         setCharge({ ...EMPTY_ENTRY, method: '' })
         toast('Khata charge added')
       }
-      await loadKhata(viewing)
+      await loadKhata(viewing, khataStatus)
       await load()
     } catch (err) {
       toast(err.message || 'Could not add khata entry')
@@ -236,7 +308,7 @@ const Customers = () => {
     const res = await window.api.deleteCustomerKhataEntries(viewing.id, entryIds)
     toast(`${res.count} entr${res.count === 1 ? 'y' : 'ies'} deleted`)
     setKhataSelected(new Set())
-    await loadKhata(viewing)
+    await loadKhata(viewing, khataStatus)
     await load()
   }
 
@@ -438,7 +510,7 @@ const Customers = () => {
             </span>
           </span>
         ) : 'Customer Khata'}
-        onClose={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()) }}
+        onClose={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()); setKhataStatus('') }}
         footer={
           <>
             {khata && (
@@ -459,7 +531,7 @@ const Customers = () => {
                 </button>
               </>
             )}
-            <button className="btn" onClick={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()) }}>Close</button>
+            <button className="btn" onClick={() => { setViewing(null); setKhata(null); setKhataSelected(new Set()); setKhataStatus('') }}>Close</button>
           </>
         }
       >
@@ -478,6 +550,28 @@ const Customers = () => {
             <div className="khata-actions">
               <div className="khata-entry-card">
                 <h3>Receive Payment</h3>
+                <div className="khata-payment-mode">
+                  <label className="khata-payment-mode-option">
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="orders"
+                      checked={payment.paymentMode === 'orders'}
+                      onChange={() => setPayment((p) => ({ ...p, paymentMode: 'orders' }))}
+                    />
+                    <span>Orders Payment</span>
+                  </label>
+                  <label className="khata-payment-mode-option">
+                    <input
+                      type="radio"
+                      name="paymentMode"
+                      value="non_orders"
+                      checked={payment.paymentMode === 'non_orders'}
+                      onChange={() => setPayment((p) => ({ ...p, paymentMode: 'non_orders' }))}
+                    />
+                    <span>Non Order Payment</span>
+                  </label>
+                </div>
                 <input
                   type="number"
                   min="0"
@@ -576,6 +670,20 @@ const Customers = () => {
               </div>
             )}
 
+            <div className="khata-table-toolbar">
+              <div className="field field-filter khata-status-filter">
+                <label>Status</label>
+                <select
+                  value={khataStatus}
+                  onChange={(e) => handleKhataStatusChange(e.target.value)}
+                >
+                  {KHATA_STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value || 'all'} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
             <div className="table-wrap">
               <table className="khata-table">
                 <thead>
@@ -592,8 +700,10 @@ const Customers = () => {
                       />
                     </th>
                     <th>Date</th>
+                    <th>Image</th>
                     <th>Type</th>
                     <th>Description</th>
+                    <th>Received</th>
                     <th>Not Paid</th>
                     <th>Paid</th>
                     <th>To Pay</th>
@@ -603,7 +713,7 @@ const Customers = () => {
                 </thead>
                 <tbody>
                   {khataRows.length === 0 ? (
-                    <tr><td colSpan={9}><div className="empty-state">No khata entries yet.</div></td></tr>
+                    <tr><td colSpan={11}><div className="empty-state">No khata entries{khataStatus ? ' for this status' : ''}.</div></td></tr>
                   ) : (
                     khataRows.map((row) => (
                       <tr key={row.id} className={khataSelected.has(row.id) ? 'row-selected' : ''}>
@@ -617,14 +727,20 @@ const Customers = () => {
                           />
                         </td>
                         <td>{fmtDate(row.created_at)}</td>
-                        <td><span className={`badge ${typeClass(row.type)}`}>{typeLabel(row.type)}</span></td>
+                        <td>
+                          {row.order_image
+                            ? <ProductThumb src={row.order_image} name={row.description || 'Order'} />
+                            : '—'}
+                        </td>
+                        <td><span className={`badge ${typeClass(row)}`}>{typeLabel(row)}</span></td>
                         <td className="khata-description-cell">
                           <span className="khata-description" title={row.description || ''}>
                             {row.description || '-'}
                           </span>
                         </td>
-                        <td className="num">{row.type === 'debit' ? money(row.amount) : '-'}</td>
-                        <td className="num">{row.type === 'credit' ? money(row.amount) : '-'}</td>
+                        <td className="num">{isReceivedCredit(row) ? money(row.amount) : '-'}</td>
+                        <td className="num">{notPaidAmount(row) != null ? money(notPaidAmount(row)) : '-'}</td>
+                        <td className="num">{paidAmount(row) != null ? money(paidAmount(row)) : '-'}</td>
                         <td className="num">{row.type === 'payable' ? money(row.amount) : '-'}</td>
                         <td className="num"><strong>{money(row.running_balance)}</strong></td>
                         <td>
