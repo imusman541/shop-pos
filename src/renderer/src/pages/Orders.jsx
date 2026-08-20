@@ -70,6 +70,32 @@ const resolveFormStatus = (requestedStatus, paidAmount, total) => {
   return 'PARTIALLY_PAID'
 }
 
+const lineUnitType = (item, products) => {
+  if (item.unit_type) return item.unit_type
+  const product = products.find((p) => Number(p.id) === Number(item.product_id))
+  return product?.unit_type || 'quantity'
+}
+
+const lineUnitCost = (item, products) => {
+  if (item.unit_cost !== undefined && item.unit_cost !== null && item.unit_cost !== '') {
+    return Number(item.unit_cost) || 0
+  }
+  const product = products.find((p) => Number(p.id) === Number(item.product_id))
+  return Number(product?.cost) || 0
+}
+
+const qtyFieldLabel = (unitType) => {
+  if (unitType === 'weight') return 'Total Weight (kg)'
+  if (unitType === 'gaz') return 'Total گز'
+  return 'Qty'
+}
+
+const intendedAmount = (item, products) => {
+  const qty = Number(item.quantity) || 0
+  const unitCost = lineUnitCost(item, products)
+  return qty * unitCost
+}
+
 const TotalPriceLabel = () => {
   return (
     <span className="label-with-info">
@@ -207,11 +233,17 @@ const Orders = () => {
         .filter((id) => !keptIds.has(Number(id)))
         .map((id) => {
           const p = products.find((x) => x.id === id)
+          const unitType = p?.unit_type || 'quantity'
+          const unitCost = Number(p?.cost) || 0
+          const quantity = 1
+          const suggested = quantity * unitCost
           return {
             product_id: id,
             product_name: p?.name || '',
-            quantity: 1,
-            total_price: ''
+            unit_type: unitType,
+            unit_cost: unitCost,
+            quantity,
+            total_price: suggested > 0 ? String(suggested) : ''
           }
         })
       return { ...f, items: [...kept, ...added] }
@@ -221,7 +253,18 @@ const Orders = () => {
   const updateLine = (index, patch) => {
     setForm((f) => ({
       ...f,
-      items: f.items.map((item, i) => (i === index ? { ...item, ...patch } : item))
+      items: f.items.map((item, i) => {
+        if (i !== index) return item
+        const next = { ...item, ...patch }
+        if (Object.prototype.hasOwnProperty.call(patch, 'quantity')) {
+          const unitCost = lineUnitCost(next, products)
+          const qty = Number(patch.quantity)
+          if (Number.isFinite(qty) && qty > 0 && unitCost > 0) {
+            next.total_price = String(qty * unitCost)
+          }
+        }
+        return next
+      })
     }))
   }
 
@@ -246,7 +289,8 @@ const Orders = () => {
         product_name: i.product_name,
         quantity: i.quantity,
         total_price: i.total_price,
-        unit_cost: i.unit_cost
+        unit_cost: i.unit_cost,
+        unit_type: products.find((p) => Number(p.id) === Number(i.product_id))?.unit_type || 'quantity'
       }))
     })
     setModalOpen(true)
@@ -637,7 +681,10 @@ const Orders = () => {
           {form.items.length > 0 && (
             <div className="order-lines">
               <div className="order-lines-head">Line items</div>
-              {form.items.map((item, index) => (
+              {form.items.map((item, index) => {
+                const unitType = lineUnitType(item, products)
+                const intended = intendedAmount(item, products)
+                return (
                 <div key={`${item.product_id}-${index}`} className="order-line">
                   <div className="order-line-title">
                     <span className="id-pill">#{item.product_id}</span>
@@ -653,13 +700,18 @@ const Orders = () => {
                   </div>
                   <div className="order-line-fields">
                     <div>
-                      <label>Qty</label>
+                      <label>{qtyFieldLabel(unitType)}</label>
                       <input
                         type="number"
-                        min="1"
+                        min={unitType === 'quantity' ? '1' : '0.01'}
+                        step={unitType === 'quantity' ? '1' : 'any'}
                         value={item.quantity}
                         onChange={(e) => updateLine(index, { quantity: e.target.value })}
                       />
+                    </div>
+                    <div>
+                      <label>مطلوبہ رقم</label>
+                      <div className="order-line-intended">{money(intended)}</div>
                     </div>
                     <div>
                       <label><TotalPriceLabel /></label>
@@ -675,7 +727,8 @@ const Orders = () => {
                     </div>
                   </div>
                 </div>
-              ))}
+                )
+              })}
               <div className="order-lines-summary">
                 <span>Order total</span>
                 <strong>{money(formOrderTotal)}</strong>
