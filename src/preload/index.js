@@ -17,13 +17,15 @@ const api = {
   updateProduct: (id, data) => ipcRenderer.invoke('products:update', { id, data }),
   deleteProduct: (id) => ipcRenderer.invoke('products:delete', id),
   deleteProducts: (ids) => ipcRenderer.invoke('products:deleteMany', ids),
+  increaseProductsCostByPercent: (ids, percent) =>
+    ipcRenderer.invoke('products:increaseCostByPercent', { ids, percent }),
   exportProducts: () => ipcRenderer.invoke('products:export'),
   importProducts: () => ipcRenderer.invoke('products:import'),
 
   // Customers / Khata
   getCustomers: (filters) => ipcRenderer.invoke('customers:get', filters),
   listCustomersBrief: () => ipcRenderer.invoke('customers:listBrief'),
-  getCustomerKhata: (id) => ipcRenderer.invoke('customers:getKhata', id),
+  getCustomerKhata: (id, filters = {}) => ipcRenderer.invoke('customers:getKhata', { id, ...filters }),
   createCustomer: (data) => ipcRenderer.invoke('customers:create', data),
   updateCustomer: (id, data) => ipcRenderer.invoke('customers:update', { id, data }),
   deleteCustomer: (id) => ipcRenderer.invoke('customers:delete', id),
@@ -34,6 +36,17 @@ const api = {
   addCustomerPayable: (id, data) => ipcRenderer.invoke('customers:payable', { id, data }),
   exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
   shareCustomerKhataOnWhatsApp: (id, entryIds = []) => ipcRenderer.invoke('customers:shareKhataWhatsApp', { id, entryIds }),
+
+  // Vendors / Supplier Khata
+  getVendors: (filters) => ipcRenderer.invoke('vendors:get', filters),
+  getVendorKhata: (id) => ipcRenderer.invoke('vendors:getKhata', id),
+  createVendor: (data) => ipcRenderer.invoke('vendors:create', data),
+  updateVendor: (id, data) => ipcRenderer.invoke('vendors:update', { id, data }),
+  deleteVendor: (id) => ipcRenderer.invoke('vendors:delete', id),
+  deleteVendors: (ids) => ipcRenderer.invoke('vendors:deleteMany', ids),
+  deleteVendorKhataEntries: (id, entryIds) => ipcRenderer.invoke('vendors:deleteKhataEntries', { id, entryIds }),
+  addVendorPurchase: (id, data) => ipcRenderer.invoke('vendors:purchase', { id, data }),
+  payVendor: (id, data) => ipcRenderer.invoke('vendors:payment', { id, data }),
 
   // Expenses
   getExpenses: (filters) => ipcRenderer.invoke('expenses:get', filters),

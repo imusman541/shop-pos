@@ -102,6 +102,46 @@ const isOrderCreditRow = (row) => (
   && (row.credit_kind === 'order' || (!row.credit_kind && row.order_id))
 )
 
+const normalizeLedgerOrderStatus = (status) => (status === 'DONE' ? 'PAID' : status)
+
+const khataNotPaidAmount = (row) => {
+  if (row.type !== 'debit') return null
+  if (row.order_id) {
+    const status = normalizeLedgerOrderStatus(row.order_status)
+    if (status === 'PAID' || status === 'CANCELLED') return null
+    if (status === 'PARTIALLY_PAID') {
+      const remaining = Math.max(0, num(row.amount) - num(row.order_paid_amount))
+      return remaining > PAYMENT_EPS ? remaining : null
+    }
+    return num(row.amount)
+  }
+  return num(row.amount)
+}
+
+const khataPaidAmount = (row) => {
+  if (isOrderCreditRow(row)) return num(row.amount)
+  if (row.type === 'debit' && row.order_id) {
+    const status = normalizeLedgerOrderStatus(row.order_status)
+    if (status === 'PAID') return num(row.amount)
+    if (status === 'PARTIALLY_PAID') {
+      const paid = num(row.order_paid_amount)
+      return paid > PAYMENT_EPS ? paid : null
+    }
+  }
+  return null
+}
+
+const formatOrdersPaymentDescription = (baseDescription, ordersUpdated = []) => {
+  if (!ordersUpdated.length) return baseDescription || 'Payment received'
+  const refs = ordersUpdated.map((item) => `#${item.orderId}`).join(', ')
+  const orderLabel = ordersUpdated.length === 1 ? `Order ${refs}` : `Orders ${refs}`
+  const base = String(baseDescription || '').trim()
+  if (!base || base === 'Payment received') {
+    return `Payment received for ${orderLabel}`
+  }
+  return `${base} · ${orderLabel}`
+}
+
 /* ---------------------------------------------------------------- setup */
 
 const resolveDbPath = () => {
@@ -220,7 +260,31 @@ const init = () => {
   migrateProductsUnitType()
   migrateExpenseAmountColumn()
   migrateAppUser()
+  migrateVendorsSchema()
   return dbPath
+}
+
+const migrateVendorsSchema = () => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS vendors (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL,
+      phone       TEXT,
+      notes       TEXT,
+      created_at  TEXT    NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS vendor_ledger (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      vendor_id    INTEGER NOT NULL,
+      type         TEXT    NOT NULL CHECK (type IN ('purchase', 'payment')),
+      amount       REAL    NOT NULL DEFAULT 0,
+      description  TEXT,
+      method       TEXT,
+      created_at   TEXT    NOT NULL,
+      FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE
+    );
+  `)
 }
 
 const migrateAppUser = () => {
@@ -288,7 +352,7 @@ const getProductById = (id) => {
 
 const listProductsBrief = () => {
   return db
-    .prepare('SELECT id, name, cost, quantity, status FROM products ORDER BY name')
+    .prepare('SELECT id, name, cost, quantity, status, unit_type FROM products ORDER BY name')
     .all()
 }
 
@@ -960,7 +1024,7 @@ const listCustomers = (filters = {}) => {
   const total = filteredRows.length
   const rows = filteredRows.slice((page - 1) * pageSize, page * pageSize)
 
-  return { rows, total, page, pageSize }
+  return { rows, total, page, pageSize, totalBalance: getCustomersOwedTotal() }
 }
 
 const listCustomersBrief = () => {
@@ -997,14 +1061,24 @@ const withComputedCustomerBalance = (customer) => {
   }
 }
 
+const getCustomersOwedTotal = () => {
+  const customers = db
+    .prepare(`${customerSummarySelect} GROUP BY c.id`)
+    .all()
+    .map(withComputedCustomerBalance)
+  return customers.reduce((sum, customer) => {
+    const balance = num(customer?.balance)
+    return balance > 0 ? sum + balance : sum
+  }, 0)
+}
+
 const getCustomerKhata = (id, filters = {}) => {
   const customer = getCustomerSummary(id)
   if (!customer) return null
-  const startDate = filters.startDate || ''
-  const endDate = filters.endDate || ''
+  const status = String(filters.status || '').trim()
   const allRows = db
     .prepare(
-      `SELECT l.*, o.image AS order_image
+      `SELECT l.*, o.image AS order_image, o.status AS order_status, o.paid_amount AS order_paid_amount
        FROM customer_ledger l
        LEFT JOIN orders o ON o.id = l.order_id
        WHERE l.customer_id = ?
@@ -1012,13 +1086,13 @@ const getCustomerKhata = (id, filters = {}) => {
     )
     .all(id)
   const balanced = ledgerWithRunningBalance(allRows)
-  const rows = balanced.filter((row) => {
-    const dateKey = localDateKey(row.created_at)
-    if (startDate && dateKey < startDate) return false
-    if (endDate && dateKey > endDate) return false
-    return true
-  })
-  return { customer, rows, startDate, endDate }
+  const rows = status
+    ? balanced.filter((row) => {
+      const orderStatus = row.order_status === 'DONE' ? 'PAID' : row.order_status
+      return orderStatus === status
+    })
+    : balanced
+  return { customer, rows, status }
 }
 
 const addLedgerEntry = ({
@@ -1303,8 +1377,7 @@ const receiveCustomerPayment = ({ id, data }) => {
     })
 
     if (paymentMode === 'non_orders') {
-      const nonSalePlan = planNonSaleDebitAllocation(id, amount)
-      recordLedgerAllocations(entry.id, nonSalePlan.debitsSettled, paymentAt)
+      // Sales only (no profit). Does not pay/clear any orders.
       if (amount > PAYMENT_EPS) {
         db.prepare('UPDATE customer_ledger SET dashboard_sales = ? WHERE id = ?')
           .run(amount, entry.id)
@@ -1315,22 +1388,30 @@ const receiveCustomerPayment = ({ id, data }) => {
         ...entry,
         allocation: {
           allocated: 0,
-          remainder: nonSalePlan.remainder,
+          remainder: amount,
           ordersUpdated: [],
-          nonSaleAllocated: nonSalePlan.allocated,
-          advance: nonSalePlan.remainder,
-          debitsSettled: nonSalePlan.debitsSettled.length,
+          nonSaleAllocated: 0,
+          advance: amount,
+          debitsSettled: 0,
           paymentMode
         }
       }
     }
 
+    // Orders payment: pay unpaid orders (FIFO) → sales + profit via order_payments
     const orderPlan = planOrderDebitAllocation(id, amount)
     recordLedgerAllocations(entry.id, orderPlan.debitsSettled, paymentAt)
     for (const item of orderPlan.ordersUpdated) {
       applyOrderPaymentUpdate(item.orderId, item.applied, paymentAt)
     }
 
+    const finalDescription = formatOrdersPaymentDescription(description, orderPlan.ordersUpdated)
+    if (finalDescription !== description) {
+      db.prepare('UPDATE customer_ledger SET description = ? WHERE id = ?').run(finalDescription, entry.id)
+      entry.description = finalDescription
+    }
+
+    // Leftover after orders can settle non-order charges (sales only, no profit)
     const nonSalePlan = planNonSaleDebitAllocation(id, orderPlan.remainder)
     recordLedgerAllocations(entry.id, nonSalePlan.debitsSettled, paymentAt)
     if (nonSalePlan.allocated > PAYMENT_EPS) {
@@ -1828,8 +1909,8 @@ const renderKhataPdf = (customer, rows) => {
         <td><span class="badge ${row.type === 'debit' ? 'out' : row.type === 'payable' ? 'payable' : 'in'}">${escapeHtml(ledgerTypeLabel(row.type))}</span></td>
         <td>${escapeHtml(row.description || '-')}</td>
         <td class="num">${isReceivedCreditRow(row) ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
-        <td class="num">${row.type === 'debit' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
-        <td class="num">${isOrderCreditRow(row) ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
+        <td class="num">${khataNotPaidAmount(row) != null ? escapeHtml(formatPdfMoney(khataNotPaidAmount(row))) : '-'}</td>
+        <td class="num">${khataPaidAmount(row) != null ? escapeHtml(formatPdfMoney(khataPaidAmount(row))) : '-'}</td>
         <td class="num">${row.type === 'payable' ? escapeHtml(formatPdfMoney(row.amount)) : '-'}</td>
         <td class="num strong">${escapeHtml(formatPdfMoney(row.running_balance))}</td>
       </tr>
@@ -2197,6 +2278,208 @@ const deleteExpenses = (ids = []) => {
   return { ok: true, count }
 }
 
+/* ------------------------------------------------------------- vendors */
+
+const vendorSummarySelect = `
+  SELECT v.id, v.name, v.phone, v.notes, v.created_at,
+         COALESCE(SUM(CASE WHEN l.type = 'purchase' THEN l.amount ELSE 0 END), 0) AS total_purchased,
+         COALESCE(SUM(CASE WHEN l.type = 'payment' THEN l.amount ELSE 0 END), 0) AS total_paid,
+         0 AS balance,
+         MAX(l.created_at) AS last_transaction
+  FROM vendors v
+  LEFT JOIN vendor_ledger l ON l.vendor_id = v.id
+`
+
+const vendorLedgerWithRunningBalance = (rows) => {
+  let running = 0
+  return rows.map((row) => {
+    if (row.type === 'purchase') running += num(row.amount)
+    else running = Math.max(0, running - num(row.amount))
+    return { ...row, running_balance: running }
+  })
+}
+
+const withComputedVendorBalance = (vendor) => {
+  if (!vendor) return null
+  const rows = db
+    .prepare('SELECT type, amount FROM vendor_ledger WHERE vendor_id = ? ORDER BY datetime(created_at), id')
+    .all(vendor.id)
+  const balancedRows = vendorLedgerWithRunningBalance(rows)
+  return {
+    ...vendor,
+    balance: balancedRows.length ? balancedRows[balancedRows.length - 1].running_balance : 0
+  }
+}
+
+const listVendors = (filters = {}) => {
+  const search = String(filters.search || '').trim()
+  const balance = filters.balance || ''
+  const page = Math.max(1, num(filters.page, 1))
+  const pageSize = Math.max(1, num(filters.pageSize, 25))
+  const where = []
+  const params = {}
+
+  if (search) {
+    where.push('(v.name LIKE @search OR v.phone LIKE @search)')
+    params.search = `%${search}%`
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : ''
+  const filteredRows = db
+    .prepare(`${vendorSummarySelect} ${whereSql} GROUP BY v.id ORDER BY v.id DESC`)
+    .all(params)
+    .map(withComputedVendorBalance)
+    .filter((vendor) => {
+      if (balance === 'pending') return vendor.balance > 0
+      if (balance === 'clear') return vendor.balance === 0
+      return true
+    })
+    .sort((a, b) => (b.balance - a.balance) || (b.id - a.id))
+
+  const total = filteredRows.length
+  const rows = filteredRows.slice((page - 1) * pageSize, page * pageSize)
+  return { rows, total, page, pageSize }
+}
+
+const getVendorSummary = (id) => {
+  return withComputedVendorBalance(
+    db.prepare(`${vendorSummarySelect} WHERE v.id = ? GROUP BY v.id`).get(id)
+  )
+}
+
+const getVendorKhata = (id) => {
+  const vendor = getVendorSummary(id)
+  if (!vendor) return null
+  const allRows = db
+    .prepare(
+      `SELECT * FROM vendor_ledger
+       WHERE vendor_id = ?
+       ORDER BY datetime(created_at), id`
+    )
+    .all(id)
+  return { vendor, rows: vendorLedgerWithRunningBalance(allRows) }
+}
+
+const addVendorLedgerEntry = ({
+  vendor_id,
+  type,
+  amount,
+  description = '',
+  method = '',
+  created_at = nowISO()
+}) => {
+  const value = num(amount)
+  if (!vendor_id) throw new Error('Select a vendor')
+  if (!['purchase', 'payment'].includes(type)) throw new Error('Invalid vendor ledger type')
+  if (value <= 0) throw new Error('Amount must be greater than 0')
+
+  const info = db.prepare(
+    `INSERT INTO vendor_ledger
+     (vendor_id, type, amount, description, method, created_at)
+     VALUES (@vendor_id, @type, @amount, @description, @method, @created_at)`
+  ).run({
+    vendor_id,
+    type,
+    amount: value,
+    description,
+    method,
+    created_at
+  })
+  return db.prepare('SELECT * FROM vendor_ledger WHERE id = ?').get(info.lastInsertRowid)
+}
+
+const createVendor = (data) => {
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Vendor name is required')
+
+  const info = db.prepare(
+    `INSERT INTO vendors (name, phone, notes, created_at)
+     VALUES (@name, @phone, @notes, @created_at)`
+  ).run({
+    name,
+    phone: String(data.phone || '').trim(),
+    notes: String(data.notes || '').trim(),
+    created_at: nowISO()
+  })
+
+  const id = info.lastInsertRowid
+  const opening = num(data.opening_balance)
+  if (opening > 0) {
+    addVendorLedgerEntry({
+      vendor_id: id,
+      type: 'purchase',
+      amount: opening,
+      description: 'Opening balance'
+    })
+  }
+  return getVendorSummary(id)
+}
+
+const updateVendor = ({ id, data }) => {
+  const name = String(data.name || '').trim()
+  if (!name) throw new Error('Vendor name is required')
+
+  db.prepare(
+    `UPDATE vendors
+     SET name = @name, phone = @phone, notes = @notes
+     WHERE id = @id`
+  ).run({
+    id,
+    name,
+    phone: String(data.phone || '').trim(),
+    notes: String(data.notes || '').trim()
+  })
+  return getVendorSummary(id)
+}
+
+const deleteVendor = (id) => {
+  db.prepare('DELETE FROM vendor_ledger WHERE vendor_id = ?').run(id)
+  const result = db.prepare('DELETE FROM vendors WHERE id = ?').run(id)
+  return { ok: true, count: result.changes }
+}
+
+const deleteVendors = (ids = []) => {
+  const list = [...new Set(ids.map((id) => Number(id)).filter((id) => id > 0))]
+  if (!list.length) return { ok: true, count: 0 }
+  const placeholders = list.map(() => '?').join(', ')
+  db.prepare(`DELETE FROM vendor_ledger WHERE vendor_id IN (${placeholders})`).run(...list)
+  const result = db.prepare(`DELETE FROM vendors WHERE id IN (${placeholders})`).run(...list)
+  return { ok: true, count: result.changes }
+}
+
+const deleteVendorLedgerEntries = ({ id, entryIds = [] }) => {
+  const vendorId = Number(id)
+  const list = [...new Set(entryIds.map((entryId) => Number(entryId)).filter((entryId) => entryId > 0))]
+  if (!vendorId || !list.length) return { ok: true, count: 0 }
+  const placeholders = list.map(() => '?').join(', ')
+  const result = db
+    .prepare(`DELETE FROM vendor_ledger WHERE vendor_id = ? AND id IN (${placeholders})`)
+    .run(vendorId, ...list)
+  return { ok: true, count: result.changes }
+}
+
+const addVendorPurchase = ({ id, data }) => {
+  return addVendorLedgerEntry({
+    vendor_id: id,
+    type: 'purchase',
+    amount: data.amount,
+    description: data.description || 'Purchase',
+    method: data.method || '',
+    created_at: data.created_at || nowISO()
+  })
+}
+
+const payVendor = ({ id, data }) => {
+  return addVendorLedgerEntry({
+    vendor_id: id,
+    type: 'payment',
+    amount: data.amount,
+    description: data.description || 'Payment to vendor',
+    method: data.method || 'Cash',
+    created_at: data.created_at || nowISO()
+  })
+}
+
 export {
   init,
   backupTo,
@@ -2240,5 +2523,14 @@ export {
   exportOrders,
   exportCustomerKhata,
   shareCustomerKhataOnWhatsApp,
-  importProducts
+  importProducts,
+  listVendors,
+  getVendorKhata,
+  createVendor,
+  updateVendor,
+  deleteVendor,
+  deleteVendors,
+  deleteVendorLedgerEntries,
+  addVendorPurchase,
+  payVendor
 }
