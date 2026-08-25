@@ -21,7 +21,7 @@ const Customers = () => {
   const toast = useToast()
   const [filters, setFilters] = useState({ search: '', balance: '' })
   const [page, setPage] = useState(1)
-  const [data, setData] = useState({ rows: [], total: 0 })
+  const [data, setData] = useState({ rows: [], total: 0, totalBalance: 0 })
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(() => new Set())
 
@@ -322,7 +322,11 @@ const Customers = () => {
           <h1>Customers Khata</h1>
           <p>Track customers, unpaid orders, payments, and running balances.</p>
         </div>
-        <div className="head-actions">
+        <div className="head-actions customers-head-actions">
+          <div className="inventory-kpi customers-balance-kpi">
+            <span className="inventory-kpi-label">Total Balance</span>
+            <span className="inventory-kpi-value">{money(data.totalBalance ?? 0)}</span>
+          </div>
           <button className="btn btn-primary" onClick={openCreate}><IconPlus /> Add Customer</button>
         </div>
       </div>

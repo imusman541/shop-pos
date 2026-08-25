@@ -36,6 +36,16 @@ export const IconUsers = (p) => (
   </svg>
 )
 
+export const IconTruck = (p) => (
+  <svg {...base} className="ico" {...p}>
+    <path d="M14 18V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v11a1 1 0 0 0 1 1h2" />
+    <path d="M15 18H9" />
+    <path d="M19 18h2a1 1 0 0 0 1-1v-3.65a1 1 0 0 0-.22-.624l-3.48-4.35A1 1 0 0 0 17.52 8H14" />
+    <circle cx="17" cy="18" r="2" />
+    <circle cx="7" cy="18" r="2" />
+  </svg>
+)
+
 export const IconWallet = (p) => (
   <svg {...base} className="ico" {...p}>
     <path d="M20 7H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h15a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z" />
@@ -68,6 +78,14 @@ export const IconEdit = (p) => (
 export const IconTrash = (p) => (
   <svg {...base} width="15" height="15" {...p}>
     <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+  </svg>
+)
+
+export const IconPercent = (p) => (
+  <svg {...base} width="15" height="15" {...p}>
+    <path d="M19 5L5 19" />
+    <circle cx="6.5" cy="6.5" r="2.5" />
+    <circle cx="17.5" cy="17.5" r="2.5" />
   </svg>
 )
 
