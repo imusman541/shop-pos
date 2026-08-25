@@ -3,10 +3,11 @@ import Dashboard from './pages/Dashboard'
 import Products from './pages/Products'
 import Orders from './pages/Orders'
 import Customers from './pages/Customers'
+import Vendors from './pages/Vendors'
 import Expenses from './pages/Expenses'
 import Auth from './pages/Auth'
 import { ToastProvider } from './components/Toast'
-import { IconDashboard, IconBox, IconCart, IconLogout, IconUsers, IconWallet } from './components/icons'
+import { IconDashboard, IconBox, IconCart, IconLogout, IconUsers, IconTruck, IconWallet } from './components/icons'
 import BackupButton from './components/BackupButton'
 
 const NAV = [
@@ -14,6 +15,7 @@ const NAV = [
   { key: 'products', label: 'Inventory', Icon: IconBox, Page: Products },
   { key: 'orders', label: 'Orders', Icon: IconCart, Page: Orders },
   { key: 'customers', label: 'Customers Khata', Icon: IconUsers, Page: Customers },
+  { key: 'vendors', label: 'Vendors', Icon: IconTruck, Page: Vendors },
   { key: 'expenses', label: 'Expenses', Icon: IconWallet, Page: Expenses }
 ]
 
