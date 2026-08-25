@@ -10,6 +10,11 @@ export const int = (n) => {
   return (Number(n) || 0).toLocaleString()
 }
 
+export const qty = (n, decimals = 2) => {
+  const v = Number(n) || 0
+  return v.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: decimals })
+}
+
 export const fmtDate = (iso) => {
   if (!iso) return ''
   const d = new Date(iso)
