@@ -1,7 +1,14 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { money } from '../lib/format'
 
 const isOutOfStock = (p) => {
   return p.status === 'out_of_stock' || Number(p.quantity) <= 0
+}
+
+const unitTypeLabel = (unitType) => {
+  if (unitType === 'weight') return 'Weight'
+  if (unitType === 'gaz') return 'گز'
+  return 'Qty'
 }
 
 const ProductMultiSelect = ({
@@ -90,7 +97,11 @@ const ProductMultiSelect = ({
                     />
                     <span className="multi-select-option-text">
                       <span className="id-pill">#{p.id}</span>
-                      {p.name}
+                      <span className="multi-select-product-name">{p.name}</span>
+                      <span className="multi-select-meta">
+                        <span className="multi-select-price">{money(p.cost)}</span>
+                        <span className="multi-select-unit">{unitTypeLabel(p.unit_type)}</span>
+                      </span>
                       {isOutOfStock(p) && <span className="out-of-stock-label">(Out of Stock)</span>}
                     </span>
                   </label>
@@ -104,4 +115,4 @@ const ProductMultiSelect = ({
   )
 }
 
-export default ProductMultiSelect;
+export default ProductMultiSelect
