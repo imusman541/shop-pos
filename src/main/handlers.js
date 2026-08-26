@@ -37,6 +37,7 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('customers:payment', (_e, payload) => db.receiveCustomerPayment(payload))
   ipcMain.handle('customers:charge', (_e, payload) => db.addCustomerCharge(payload))
   ipcMain.handle('customers:payable', (_e, payload) => db.addCustomerPayable(payload))
+  ipcMain.handle('customers:updateLedgerImage', (_e, payload) => db.updateCustomerLedgerImage(payload))
   ipcMain.handle('customers:exportKhata', (_e, payload) => db.exportCustomerKhata(payload.id, payload.entryIds))
   ipcMain.handle('customers:shareKhataWhatsApp', (_e, payload) => db.shareCustomerKhataOnWhatsApp(payload.id, payload.entryIds))
 
