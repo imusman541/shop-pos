@@ -745,6 +745,9 @@ const migrateCustomerLedgerExtensions = () => {
     db.exec("UPDATE customer_ledger SET credit_kind = 'order' WHERE type = 'credit' AND order_id IS NOT NULL")
     db.exec("UPDATE customer_ledger SET credit_kind = 'received' WHERE type = 'credit' AND order_id IS NULL")
   }
+  if (!cols.includes('image')) {
+    db.exec('ALTER TABLE customer_ledger ADD COLUMN image TEXT')
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS ledger_allocations (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1105,7 +1108,8 @@ const addLedgerEntry = ({
   created_at = nowISO(),
   debit_kind = null,
   credit_kind = null,
-  dashboard_sales = 0
+  dashboard_sales = 0,
+  image = null
 }) => {
   const value = num(amount)
   if (!customer_id) throw new Error('Select a customer')
@@ -1114,8 +1118,8 @@ const addLedgerEntry = ({
 
   const info = db.prepare(
     `INSERT INTO customer_ledger
-     (customer_id, order_id, type, amount, description, method, created_at, debit_kind, credit_kind, dashboard_sales)
-     VALUES (@customer_id, @order_id, @type, @amount, @description, @method, @created_at, @debit_kind, @credit_kind, @dashboard_sales)`
+     (customer_id, order_id, type, amount, description, method, created_at, debit_kind, credit_kind, dashboard_sales, image)
+     VALUES (@customer_id, @order_id, @type, @amount, @description, @method, @created_at, @debit_kind, @credit_kind, @dashboard_sales, @image)`
   ).run({
     customer_id,
     order_id,
@@ -1126,7 +1130,8 @@ const addLedgerEntry = ({
     created_at,
     debit_kind: resolveDebitKind({ type, order_id, debit_kind }),
     credit_kind: resolveCreditKind({ type, order_id, credit_kind }),
-    dashboard_sales: Math.max(0, num(dashboard_sales))
+    dashboard_sales: Math.max(0, num(dashboard_sales)),
+    image: image || null
   })
   return db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(info.lastInsertRowid)
 }
@@ -1373,7 +1378,8 @@ const receiveCustomerPayment = ({ id, data }) => {
       description,
       method,
       created_at: paymentAt,
-      credit_kind: 'received'
+      credit_kind: 'received',
+      image: data.image || null
     })
 
     if (paymentMode === 'non_orders') {
@@ -1443,7 +1449,8 @@ const addCustomerCharge = ({ id, data }) => {
     description: data.description || 'Manual khata entry',
     method: data.method || '',
     created_at: data.created_at || nowISO(),
-    debit_kind: 'non_sale'
+    debit_kind: 'non_sale',
+    image: data.image || null
   })
 }
 
@@ -1454,11 +1461,32 @@ const addCustomerPayable = ({ id, data }) => {
     amount: data.amount,
     description: data.description || 'Amount payable to customer',
     method: data.method || '',
-    created_at: data.created_at || nowISO()
+    created_at: data.created_at || nowISO(),
+    image: data.image || null
   })
 }
 
+const updateCustomerLedgerImage = ({ id, entryId, image = null }) => {
+  const customerId = Number(id)
+  const ledgerId = Number(entryId)
+  if (!customerId || !ledgerId) throw new Error('Invalid khata entry')
+  const existing = db
+    .prepare('SELECT id FROM customer_ledger WHERE id = ? AND customer_id = ?')
+    .get(ledgerId, customerId)
+  if (!existing) throw new Error('Khata entry not found')
+  db.prepare('UPDATE customer_ledger SET image = ? WHERE id = ? AND customer_id = ?')
+    .run(image || null, ledgerId, customerId)
+  return db.prepare('SELECT * FROM customer_ledger WHERE id = ?').get(ledgerId)
+}
+
 const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items, method = 'Cash' }) => {
+  const previousDebit = db
+    .prepare(
+      `SELECT image FROM customer_ledger
+       WHERE order_id = ? AND type = 'debit'
+       ORDER BY id LIMIT 1`
+    )
+    .get(orderId)
   db.prepare('DELETE FROM customer_ledger WHERE order_id = ?').run(orderId)
   if (!isActiveOrderStatus(status) || !customerId) return
 
@@ -1470,7 +1498,8 @@ const replaceOrderLedger = ({ orderId, customerId, status, paidAmount, items, me
     order_id: orderId,
     type: 'debit',
     amount: total,
-    description: `Order #${orderId}`
+    description: `Order #${orderId}`,
+    image: previousDebit?.image || null
   })
 
   const paid = Math.min(Math.max(num(paidAmount), 0), total)
@@ -2506,6 +2535,7 @@ export {
   receiveCustomerPayment,
   addCustomerCharge,
   addCustomerPayable,
+  updateCustomerLedgerImage,
   getExpenseWallet,
   addExpenseBalance,
   listExpenses,

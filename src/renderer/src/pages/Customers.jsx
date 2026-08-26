@@ -8,7 +8,7 @@ import { IconEdit, IconExport, IconPlus, IconTrash } from '../components/icons'
 
 const PAGE_SIZE = 25
 const EMPTY_CUSTOMER = { name: '', phone: '', address: '', notes: '', opening_balance: '' }
-const EMPTY_ENTRY = { amount: '', method: '', description: '', paymentMode: 'orders' }
+const EMPTY_ENTRY = { amount: '', method: '', description: '', paymentMode: 'orders', image: null }
 const KHATA_STATUS_OPTIONS = [
   { value: '', label: 'All statuses' },
   { value: 'PAID', label: 'Paid' },
@@ -37,6 +37,13 @@ const Customers = () => {
   const [payment, setPayment] = useState(EMPTY_ENTRY)
   const [charge, setCharge] = useState({ ...EMPTY_ENTRY, method: '' })
   const [payable, setPayable] = useState({ ...EMPTY_ENTRY, method: '' })
+
+  const readImageFile = (file, onDone) => {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => onDone(reader.result)
+    reader.readAsDataURL(file)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -312,8 +319,43 @@ const Customers = () => {
     await load()
   }
 
+  const updateRowImage = async (entryId, image) => {
+    if (!viewing) return
+    try {
+      await window.api.updateCustomerLedgerImage(viewing.id, entryId, image)
+      await loadKhata(viewing, khataStatus)
+      toast(image ? 'Khata image saved' : 'Khata image removed')
+    } catch (err) {
+      toast(err.message || 'Could not update image')
+    }
+  }
+
   const clearFilters = () => updateFilter({ search: '', balance: '' })
   const hasFilters = filters.search || filters.balance
+
+  const KhataImagePicker = ({ value, onChange, compact = false }) => (
+    <div className={`khata-image-picker${compact ? ' compact' : ''}`}>
+      {value
+        ? <img className="preview" src={value} alt="Khata attachment" />
+        : <div className="preview">No image</div>}
+      <div className="khata-image-picker-actions">
+        <input
+          type="file"
+          accept="image/*"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            e.target.value = ''
+            readImageFile(file, onChange)
+          }}
+        />
+        {value && (
+          <button type="button" className="btn btn-sm btn-ghost" onClick={() => onChange(null)}>
+            Remove
+          </button>
+        )}
+      </div>
+    </div>
+  )
 
   return (
     <div className="customers-page">
@@ -597,6 +639,11 @@ const Customers = () => {
                   value={payment.description}
                   onChange={(e) => setPayment((p) => ({ ...p, description: e.target.value }))}
                 />
+                <label className="khata-image-label">Picture <span className="label-note">(optional)</span></label>
+                <KhataImagePicker
+                  value={payment.image}
+                  onChange={(image) => setPayment((p) => ({ ...p, image }))}
+                />
                 <button className="btn btn-success" onClick={() => addEntry('payment')}>Record payment</button>
               </div>
 
@@ -615,14 +662,10 @@ const Customers = () => {
                   value={charge.description}
                   onChange={(e) => setCharge((p) => ({ ...p, description: e.target.value }))}
                 />
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  placeholder="Amount"
-                  value={charge.amount}
-                  style={{ visibility: 'hidden' }}
-                  onChange={(e) => setCharge((p) => ({ ...p, amount: e.target.value }))}
+                <label className="khata-image-label">Picture <span className="label-note">(optional)</span></label>
+                <KhataImagePicker
+                  value={charge.image}
+                  onChange={(image) => setCharge((p) => ({ ...p, image }))}
                 />
                 <button className="btn btn-solid-danger" onClick={() => addEntry('charge')}>Add charge</button>
               </div>
@@ -649,6 +692,11 @@ const Customers = () => {
                   placeholder="Description"
                   value={payable.description}
                   onChange={(e) => setPayable((p) => ({ ...p, description: e.target.value }))}
+                />
+                <label className="khata-image-label">Picture <span className="label-note">(optional)</span></label>
+                <KhataImagePicker
+                  value={payable.image}
+                  onChange={(image) => setPayable((p) => ({ ...p, image }))}
                 />
                 <button className="btn btn-primary" onClick={() => addEntry('payable')}>Add to pay</button>
               </div>
@@ -732,9 +780,39 @@ const Customers = () => {
                         </td>
                         <td>{fmtDate(row.created_at)}</td>
                         <td>
-                          {row.order_image
-                            ? <ProductThumb src={row.order_image} name={row.description || 'Order'} />
-                            : '—'}
+                          <div className="khata-image-cell">
+                            <div className="khata-image-thumbs">
+                              {row.order_image && (
+                                <ProductThumb src={row.order_image} name={`${row.description || 'Order'} (order)`} />
+                              )}
+                              {row.image && (
+                                <ProductThumb src={row.image} name={`${row.description || 'Khata'} (khata)`} />
+                              )}
+                              {!row.order_image && !row.image && <span className="muted-dash">—</span>}
+                            </div>
+                            <label className="khata-row-upload btn btn-sm">
+                              {row.image ? 'Change' : 'Upload'}
+                              <input
+                                type="file"
+                                accept="image/*"
+                                hidden
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0]
+                                  e.target.value = ''
+                                  readImageFile(file, (image) => updateRowImage(row.id, image))
+                                }}
+                              />
+                            </label>
+                            {row.image && (
+                              <button
+                                type="button"
+                                className="btn btn-sm btn-ghost"
+                                onClick={() => updateRowImage(row.id, null)}
+                              >
+                                Remove
+                              </button>
+                            )}
+                          </div>
                         </td>
                         <td><span className={`badge ${typeClass(row)}`}>{typeLabel(row)}</span></td>
                         <td className="khata-description-cell">
