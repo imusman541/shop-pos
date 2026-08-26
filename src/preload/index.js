@@ -34,6 +34,8 @@ const api = {
   receiveCustomerPayment: (id, data) => ipcRenderer.invoke('customers:payment', { id, data }),
   addCustomerCharge: (id, data) => ipcRenderer.invoke('customers:charge', { id, data }),
   addCustomerPayable: (id, data) => ipcRenderer.invoke('customers:payable', { id, data }),
+  updateCustomerLedgerImage: (id, entryId, image) =>
+    ipcRenderer.invoke('customers:updateLedgerImage', { id, entryId, image }),
   exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
   shareCustomerKhataOnWhatsApp: (id, entryIds = []) => ipcRenderer.invoke('customers:shareKhataWhatsApp', { id, entryIds }),
 
