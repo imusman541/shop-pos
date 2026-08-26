@@ -2502,6 +2502,69 @@ textarea:focus {
 }
 .form-grid input, .form-grid select { width: 100%; }
 
+.khata-image-label {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.khata-image-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.khata-image-picker .preview {
+  width: 52px;
+  height: 52px;
+  border-radius: 9px;
+  border: 1px dashed var(--line);
+  object-fit: cover;
+  background: #f4f6f8;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.khata-image-picker-actions {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.khata-image-picker-actions input[type="file"] {
+  width: 100%;
+  font-size: 12px;
+}
+
+.khata-image-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 110px;
+}
+
+.khata-image-thumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.khata-row-upload {
+  cursor: pointer;
+  margin: 0;
+}
+
+.khata-row-upload input {
+  display: none;
+}
+
 .img-picker {
   display: flex;
   align-items: center;
