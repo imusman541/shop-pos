@@ -4,7 +4,6 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    // better-sqlite3 / xlsx are native or node-only and must stay external
     plugins: [externalizeDepsPlugin()],
     build: {
       watch: {}
