@@ -631,7 +631,6 @@ const migrateOrderPayments = () => {
     })()
   }
 
-  // Migrate legacy DONE → payment-based statuses (Paid / Not paid / Partially Paid)
   db.prepare(`UPDATE orders SET status = 'PAID' WHERE status = 'DONE'`).run()
 
   const activeOrders = db
