@@ -1704,11 +1704,6 @@ const deleteOrders = (ids = []) => {
   return { ok: true, count }
 }
 
-/* ------------------------------------------------------------ dashboard */
-// Sales / profit / items are attributed to payment dates (order_payments),
-// not order creation dates. Profit uses cost-recovery-first: each payment
-// first covers remaining product cost, then counts as profit.
-
 const parseIsoDate = (iso) => {
   const [y, m, d] = String(iso).slice(0, 10).split('-').map(Number)
   return new Date(y, m - 1, d)
