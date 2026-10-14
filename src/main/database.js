@@ -1416,7 +1416,6 @@ const receiveCustomerPayment = ({ id, data }) => {
       entry.description = finalDescription
     }
 
-    // Leftover after orders can settle non-order charges (sales only, no profit)
     const nonSalePlan = planNonSaleDebitAllocation(id, orderPlan.remainder)
     recordLedgerAllocations(entry.id, nonSalePlan.debitsSettled, paymentAt)
     if (nonSalePlan.allocated > PAYMENT_EPS) {
