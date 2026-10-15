@@ -8,7 +8,6 @@ import { scheduleBackups, runBackupNow } from './backup'
 const APP_NAME = 'Alizeh Foam'
 const USER_DATA_DIR = 'shop-pos'
 
-// Display name for dock / menu; data folder stays fixed so the DB path never moves.
 app.setName(APP_NAME)
 app.setPath('userData', path.join(app.getPath('appData'), USER_DATA_DIR))
 
