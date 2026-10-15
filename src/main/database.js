@@ -686,7 +686,6 @@ const syncOrderPayments = (orderId, targetPaid, { paymentAt = nowISO(), seedAt =
     return
   }
 
-  // Reduce payments from newest to oldest when paid_amount is lowered
   let remaining = Math.abs(delta)
   const payments = db
     .prepare('SELECT id, amount FROM order_payments WHERE order_id = ? ORDER BY datetime(created_at) DESC, id DESC')
