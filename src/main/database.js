@@ -1382,7 +1382,6 @@ const receiveCustomerPayment = ({ id, data }) => {
     })
 
     if (paymentMode === 'non_orders') {
-      // Sales only (no profit). Does not pay/clear any orders.
       if (amount > PAYMENT_EPS) {
         db.prepare('UPDATE customer_ledger SET dashboard_sales = ? WHERE id = ?')
           .run(amount, entry.id)
