@@ -51,7 +51,6 @@ const createWindow = () => {
 
   win.once('ready-to-show', () => win.show())
 
-  // Open external links in the user's browser, not inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
