@@ -1,4 +1,3 @@
-// Change CURRENCY to match your shop (e.g. '$', '£', 'Rs ', '₹').
 export const CURRENCY = 'Rs '
 
 export const money = (n) => {
