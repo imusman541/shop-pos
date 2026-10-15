@@ -56,9 +56,6 @@ const createWindow = () => {
     return { action: 'deny' }
   })
 
-  // Dev: electron-vite sets process.env.ELECTRON_RENDERER_URL when you run `npm run dev`
-  // (e.g. http://127.0.0.1:5173/) so the window loads the Vite dev server with hot reload.
-  // Production / preview: unset → load the built HTML from disk instead.
   if (process.env.ELECTRON_RENDERER_URL) {
     win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
