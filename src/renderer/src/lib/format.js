@@ -22,7 +22,6 @@ export const fmtDate = (iso) => {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
-// yyyy-mm-dd for <input type="date">
 export const toInputDate = (d) => {
   const x = new Date(d)
   const off = x.getTimezoneOffset()
