@@ -1401,7 +1401,6 @@ const receiveCustomerPayment = ({ id, data }) => {
       }
     }
 
-    // Orders payment: pay unpaid orders (FIFO) → sales + profit via order_payments
     const orderPlan = planOrderDebitAllocation(id, amount)
     recordLedgerAllocations(entry.id, orderPlan.debitsSettled, paymentAt)
     for (const item of orderPlan.ordersUpdated) {
