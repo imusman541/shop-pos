@@ -12,7 +12,6 @@ const CONFIG = {
   intervalMinutes: 30, // how often to auto-backup while the app is open
   keepCopies: 10, // how many timestamped copies to keep before pruning
 
-  // (iCloud Drive / Google Drive / Dropbox / OneDrive). Leave '' to disable.
   // e.g. '/Users/you/Library/Mobile Documents/com~apple~CloudDocs/ShopPOS-Backups'
   externalBackupDir: '',
 
