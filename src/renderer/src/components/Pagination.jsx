@@ -7,7 +7,6 @@ const Pagination = ({ page, pageSize, total, onChange }) => {
   const from = (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
 
-  // Compact window of page numbers around the current page.
   const pages = []
   const add = (p) => pages.push(p)
   const window = 1
