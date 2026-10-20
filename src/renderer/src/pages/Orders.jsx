@@ -199,7 +199,6 @@ const Orders = () => {
       if (nextStatus === 'NOT_PAID') {
         return { ...f, status: 'NOT_PAID', paid_amount: '0' }
       }
-      // PARTIALLY_PAID — keep current paid if already partial; otherwise clear so user enters it
       const paid = Number(f.paid_amount) || 0
       const alreadyPartial = total > 0 && paid > 0.009 && paid + 0.009 < total
       return {
