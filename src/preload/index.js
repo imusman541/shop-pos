@@ -3,13 +3,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 const api = {
-  // Auth
   authStatus: () => ipcRenderer.invoke('auth:status'),
   signUp: (data) => ipcRenderer.invoke('auth:signUp', data),
   signIn: (data) => ipcRenderer.invoke('auth:signIn', data),
   signOut: () => ipcRenderer.invoke('auth:signOut'),
 
-  // Products
   getProducts: (filters) => ipcRenderer.invoke('products:get', filters),
   getProductById: (id) => ipcRenderer.invoke('products:getById', id),
   listProductsBrief: () => ipcRenderer.invoke('products:listBrief'),
@@ -22,7 +20,6 @@ const api = {
   exportProducts: () => ipcRenderer.invoke('products:export'),
   importProducts: () => ipcRenderer.invoke('products:import'),
 
-  // Customers / Khata
   getCustomers: (filters) => ipcRenderer.invoke('customers:get', filters),
   listCustomersBrief: () => ipcRenderer.invoke('customers:listBrief'),
   getCustomerKhata: (id, filters = {}) => ipcRenderer.invoke('customers:getKhata', { id, ...filters }),
@@ -39,7 +36,6 @@ const api = {
   exportCustomerKhata: (id, entryIds = []) => ipcRenderer.invoke('customers:exportKhata', { id, entryIds }),
   shareCustomerKhataOnWhatsApp: (id, entryIds = []) => ipcRenderer.invoke('customers:shareKhataWhatsApp', { id, entryIds }),
 
-  // Vendors / Supplier Khata
   getVendors: (filters) => ipcRenderer.invoke('vendors:get', filters),
   getVendorKhata: (id) => ipcRenderer.invoke('vendors:getKhata', id),
   createVendor: (data) => ipcRenderer.invoke('vendors:create', data),
@@ -50,7 +46,6 @@ const api = {
   addVendorPurchase: (id, data) => ipcRenderer.invoke('vendors:purchase', { id, data }),
   payVendor: (id, data) => ipcRenderer.invoke('vendors:payment', { id, data }),
 
-  // Expenses
   getExpenses: (filters) => ipcRenderer.invoke('expenses:get', filters),
   getExpenseWallet: () => ipcRenderer.invoke('expenses:getWallet'),
   addExpenseBalance: (data) => ipcRenderer.invoke('expenses:addBalance', data),
@@ -59,7 +54,6 @@ const api = {
   deleteExpense: (id) => ipcRenderer.invoke('expenses:delete', id),
   deleteExpenses: (ids) => ipcRenderer.invoke('expenses:deleteMany', ids),
 
-  // Orders
   getOrders: (filters) => ipcRenderer.invoke('orders:get', filters),
   createOrder: (data) => ipcRenderer.invoke('orders:create', data),
   updateOrder: (id, data) => ipcRenderer.invoke('orders:update', { id, data }),
@@ -67,7 +61,6 @@ const api = {
   deleteOrders: (ids) => ipcRenderer.invoke('orders:deleteMany', ids),
   exportOrders: () => ipcRenderer.invoke('orders:export'),
 
-  // Dashboard
   getDashboard: (filters) => ipcRenderer.invoke('dashboard:get', filters),
   backupNow: () => ipcRenderer.invoke('backup:now')
 }
