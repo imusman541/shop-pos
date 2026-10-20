@@ -3,13 +3,11 @@ import * as auth from './auth'
 import { runBackupNow } from './backup'
 
 export const registerHandlers = (ipcMain) => {
-  // Auth
   ipcMain.handle('auth:status', () => auth.getAuthStatus())
   ipcMain.handle('auth:signUp', (_e, data) => auth.signUp(data))
   ipcMain.handle('auth:signIn', (_e, data) => auth.signIn(data))
   ipcMain.handle('auth:signOut', () => auth.signOut())
 
-  // Products
   ipcMain.handle('products:get', (_e, filters) => db.getProducts(filters))
   ipcMain.handle('products:getById', (_e, id) => db.getProductById(id))
   ipcMain.handle('products:listBrief', () => db.listProductsBrief())
@@ -21,7 +19,6 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('products:export', () => db.exportProducts())
   ipcMain.handle('products:import', () => db.importProducts())
 
-  // Customers / Khata
   ipcMain.handle('customers:get', (_e, filters) => db.listCustomers(filters))
   ipcMain.handle('customers:listBrief', () => db.listCustomersBrief())
   ipcMain.handle('customers:getKhata', (_e, payload) => {
@@ -41,7 +38,6 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('customers:exportKhata', (_e, payload) => db.exportCustomerKhata(payload.id, payload.entryIds))
   ipcMain.handle('customers:shareKhataWhatsApp', (_e, payload) => db.shareCustomerKhataOnWhatsApp(payload.id, payload.entryIds))
 
-  // Vendors / Supplier Khata
   ipcMain.handle('vendors:get', (_e, filters) => db.listVendors(filters))
   ipcMain.handle('vendors:getKhata', (_e, id) => db.getVendorKhata(id))
   ipcMain.handle('vendors:create', (_e, data) => db.createVendor(data))
@@ -52,7 +48,6 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('vendors:purchase', (_e, payload) => db.addVendorPurchase(payload))
   ipcMain.handle('vendors:payment', (_e, payload) => db.payVendor(payload))
 
-  // Expenses
   ipcMain.handle('expenses:get', (_e, filters) => db.listExpenses(filters))
   ipcMain.handle('expenses:getWallet', () => db.getExpenseWallet())
   ipcMain.handle('expenses:addBalance', (_e, data) => db.addExpenseBalance(data))
@@ -61,7 +56,6 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('expenses:delete', (_e, id) => db.deleteExpense(id))
   ipcMain.handle('expenses:deleteMany', (_e, ids) => db.deleteExpenses(ids))
 
-  // Orders
   ipcMain.handle('orders:get', (_e, filters) => db.getOrders(filters))
   ipcMain.handle('orders:create', (_e, data) => db.createOrder(data))
   ipcMain.handle('orders:update', (_e, payload) => db.updateOrder(payload))
@@ -69,6 +63,5 @@ export const registerHandlers = (ipcMain) => {
   ipcMain.handle('orders:deleteMany', (_e, ids) => db.deleteOrders(ids))
   ipcMain.handle('orders:export', () => db.exportOrders())
   ipcMain.handle('backup:now', () => runBackupNow())
-  // Dashboard
   ipcMain.handle('dashboard:get', (_e, filters) => db.getDashboard(filters))
 }
