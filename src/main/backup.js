@@ -14,7 +14,6 @@ const CONFIG = {
 
   externalBackupDir: '',
 
-  // a repo already cloned/initialised at repoDir with a remote + working auth.
   git: {
     enabled: false,
     repoDir: '', // absolute path to the git repo folder
