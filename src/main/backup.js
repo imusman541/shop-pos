@@ -5,8 +5,8 @@ import { execFile } from 'child_process'
 import { backupTo } from './database'
 
 const CONFIG = {
-  intervalMinutes: 30, // how often to auto-backup while the app is open
-  keepCopies: 10, // how many timestamped copies to keep before pruning
+  intervalMinutes: 30,
+  keepCopies: 10,
 
   externalBackupDir: '',
 
