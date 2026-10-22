@@ -14,7 +14,6 @@ const CONFIG = {
 
   externalBackupDir: '',
 
-  // Advanced: push the backup file to a GitHub repo. Requires git installed,
   // a repo already cloned/initialised at repoDir with a remote + working auth.
   git: {
     enabled: false,
