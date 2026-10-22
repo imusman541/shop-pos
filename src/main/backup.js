@@ -4,8 +4,6 @@ import fs from 'fs'
 import { execFile } from 'child_process'
 import { backupTo } from './database'
 
-/* ------------------------------------------------------------------ config
- * -------------------------------------------------------------------------- */
 const CONFIG = {
   intervalMinutes: 30, // how often to auto-backup while the app is open
   keepCopies: 10, // how many timestamped copies to keep before pruning
