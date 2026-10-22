@@ -5,7 +5,6 @@ import { execFile } from 'child_process'
 import { backupTo } from './database'
 
 /* ------------------------------------------------------------------ config
- * defaults. Cloud/Git options are OPT-IN.
  * -------------------------------------------------------------------------- */
 const CONFIG = {
   intervalMinutes: 30, // how often to auto-backup while the app is open
