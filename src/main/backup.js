@@ -16,7 +16,7 @@ const CONFIG = {
 
   git: {
     enabled: false,
-    repoDir: '', // absolute path to the git repo folder
+    repoDir: '',
     branch: 'main',
     commitPrefix: 'POS backup'
   }
