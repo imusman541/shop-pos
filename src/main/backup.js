@@ -5,7 +5,6 @@ import { execFile } from 'child_process'
 import { backupTo } from './database'
 
 /* ------------------------------------------------------------------ config
- * Edit these to control backup behaviour. Everything works locally with the
  * defaults. Cloud/Git options are OPT-IN.
  * -------------------------------------------------------------------------- */
 const CONFIG = {
