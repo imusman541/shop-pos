@@ -88,8 +88,8 @@ export const runBackupNow = async () => {
     ensureDir(dir)
 
     const dest = path.join(dir, `pos-backup-${stamp()}.db`)
-    await backupTo(dest) // clean, consistent snapshot (folds in WAL)
-    fs.copyFileSync(dest, latestPath()) // stable "latest" copy
+    await backupTo(dest)
+    fs.copyFileSync(dest, latestPath())
     prune(dir)
 
     if (CONFIG.externalBackupDir) {
