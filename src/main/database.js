@@ -2134,7 +2134,6 @@ const importProducts = async () => {
 }
 
 const backupTo = (destPath) => {
-  // Online backup: safe even while the app is running; includes WAL data.
   return db.backup(destPath)
 }
 
