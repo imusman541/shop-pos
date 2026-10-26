@@ -115,7 +115,7 @@ export const runBackupNow = async () => {
 }
 
 export const scheduleBackups = () => {
-  setTimeout(() => runBackupNow(), 5000) // shortly after launch
+  setTimeout(() => runBackupNow(), 5000)
   if (timer) clearInterval(timer)
   timer = setInterval(() => runBackupNow(), CONFIG.intervalMinutes * 60 * 1000)
 }
